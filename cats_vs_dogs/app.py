@@ -100,22 +100,37 @@ class CatsDogsApp(QMainWindow):
         self.load_model()
 
     def load_model(self):
-        # We need to change directory to where the script is or use absolute path
-        # But assuming user runs from workspace root, we check cats_vs_dogs folder
-        model_path = os.path.join(os.path.dirname(__file__), "cats_dogs_model.keras")
-        
-        if os.path.exists(model_path):
+        base_dir = os.path.dirname(__file__)
+        candidate_models = [
+            "cats_dogs_best.keras",
+            "cats_dogs_model.keras",
+        ]
+
+        model_path = None
+        for model_name in candidate_models:
+            candidate_path = os.path.join(base_dir, model_name)
+            if os.path.exists(candidate_path):
+                model_path = candidate_path
+                break
+
+        if model_path:
             try:
                 self.model = keras.models.load_model(model_path)
-                print("Model loaded successfully.")
+                print(f"Model loaded successfully: {os.path.basename(model_path)}")
             except Exception as e:
                 self.label_result.setText("Error loading model.")
                 QMessageBox.critical(self, "Error", f"Failed to load model:\n{e}")
         else:
             self.label_result.setText("Model not found!")
-            QMessageBox.warning(self, "Model Missing", 
-                "Could not find 'cats_dogs_model.keras'.\n\n"
-                "Please run the 'image_classification.ipynb' notebook first to train and save the model.")
+            QMessageBox.warning(
+                self,
+                "Model Missing",
+                "Could not find a model file.\n\n"
+                "Expected one of:\n"
+                "- cats_dogs_best.keras\n"
+                "- cats_dogs_model.keras\n\n"
+                "Please run the 'image_classification.ipynb' notebook first to train and save the model.",
+            )
             self.btn_load.setEnabled(False)
             self.btn_paste.setEnabled(False)
 
