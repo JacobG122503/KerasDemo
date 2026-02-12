@@ -14,12 +14,14 @@ from PyQt6.QtGui import QPainter, QPen, QImage, QColor, QFont, QPixmap
 from PyQt6.QtCore import Qt, QPoint, QRect
 
 # --- Model Loading ---
-if not os.path.exists('mnist_model.keras'):
-    print("Error: 'mnist_model.keras' not found!")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "mnist_model.keras")
+
+if not os.path.exists(MODEL_PATH):
+    print(f"Error: model not found at '{MODEL_PATH}'")
     sys.exit(1)
 
 print("Loading model...")
-model = keras.models.load_model('mnist_model.keras')
+model = keras.models.load_model(MODEL_PATH)
 print("Model loaded.")
 
 # --- Drawing Widget ---
