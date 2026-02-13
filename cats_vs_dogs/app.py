@@ -52,6 +52,13 @@ class CatsDogsApp(QMainWindow):
         self.label_result.setStyleSheet("color: #555555;")
         layout.addWidget(self.label_result)
 
+        # Model Label
+        self.label_model = QLabel("Model: not loaded")
+        self.label_model.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_model.setFont(QFont("Arial", 12))
+        self.label_model.setStyleSheet("color: #777777;")
+        layout.addWidget(self.label_model)
+
         # Buttons Layout
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
@@ -90,49 +97,86 @@ class CatsDogsApp(QMainWindow):
         self.btn_paste.clicked.connect(self.paste_from_clipboard)
         btn_layout.addWidget(self.btn_paste)
 
+        # Select Model Button
+        self.btn_model = QPushButton("Select Model")
+        self.btn_model.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_model.setStyleSheet(btn_style)
+        self.btn_model.clicked.connect(self.select_model)
+        btn_layout.addWidget(self.btn_model)
+
         # Keyboard shortcut: Ctrl+V / Cmd+V
         self.shortcut_paste = QShortcut(QKeySequence.StandardKey.Paste, self)
         self.shortcut_paste.activated.connect(self.paste_from_clipboard)
 
         # Load Model
+        self.models_dir = os.path.join(os.path.dirname(__file__), "models")
         self.model = None
         # Defer model loading to show UI first if needed, but here simple is fine
         self.load_model()
 
-    def load_model(self):
-        base_dir = os.path.dirname(__file__)
-        candidate_models = [
-            "cats_dogs_best.keras",
-            "cats_dogs_model.keras",
-        ]
+    def load_model(self, model_path=None):
+        if model_path is None:
+            candidate_models = [
+                "model_2026-02-13_010426.keras",
+            ]
 
-        model_path = None
-        for model_name in candidate_models:
-            candidate_path = os.path.join(base_dir, model_name)
-            if os.path.exists(candidate_path):
-                model_path = candidate_path
-                break
+            if os.path.isdir(self.models_dir):
+                for model_name in candidate_models:
+                    candidate_path = os.path.join(self.models_dir, model_name)
+                    if os.path.exists(candidate_path):
+                        model_path = candidate_path
+                        break
+
+                if model_path is None:
+                    keras_files = [
+                        file_name
+                        for file_name in os.listdir(self.models_dir)
+                        if file_name.lower().endswith(".keras")
+                    ]
+                    if keras_files:
+                        keras_files.sort()
+                        model_path = os.path.join(self.models_dir, keras_files[0])
 
         if model_path:
             try:
                 self.model = keras.models.load_model(model_path)
+                self.label_model.setText(f"Model: {os.path.basename(model_path)}")
+                self.btn_load.setEnabled(True)
+                self.btn_paste.setEnabled(True)
                 print(f"Model loaded successfully: {os.path.basename(model_path)}")
             except Exception as e:
                 self.label_result.setText("Error loading model.")
                 QMessageBox.critical(self, "Error", f"Failed to load model:\n{e}")
         else:
             self.label_result.setText("Model not found!")
+            self.label_model.setText("Model: not found")
             QMessageBox.warning(
                 self,
                 "Model Missing",
                 "Could not find a model file.\n\n"
-                "Expected one of:\n"
-                "- cats_dogs_best.keras\n"
-                "- cats_dogs_model.keras\n\n"
+                "Expected one in the 'models' folder.\n\n"
                 "Please run the 'image_classification.ipynb' notebook first to train and save the model.",
             )
             self.btn_load.setEnabled(False)
             self.btn_paste.setEnabled(False)
+
+    def select_model(self):
+        if not os.path.isdir(self.models_dir):
+            QMessageBox.warning(
+                self,
+                "Models Folder Missing",
+                "The 'models' folder was not found. Please create it and add model files.",
+            )
+            return
+
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model",
+            self.models_dir,
+            "Keras Models (*.keras)",
+        )
+        if file_name:
+            self.load_model(file_name)
 
     def load_image_from_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)")
