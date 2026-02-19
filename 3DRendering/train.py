@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -12,8 +13,9 @@ MODEL_META_PATH = os.path.join(MODEL_DIR, "nerf_model_meta.txt")
 BATCH_SIZE = 4
 NUM_SAMPLES = 32
 POS_ENCODE_DIMS = 10
-EPOCHS = 5
+EPOCHS = 1000
 AUTO = tf.data.AUTOTUNE
+MAX_TRAIN_SECONDS = int(7.5 * 60 * 60)
 
 
 
@@ -142,6 +144,46 @@ class NeRF(keras.Model):
         return [self.loss_tracker]
 
 
+class StopOnRegression(keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.best_loss = None
+        self.best_weights = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        if not logs:
+            return
+        loss = logs.get("loss")
+        if loss is None:
+            return
+
+        if self.best_loss is None or loss <= self.best_loss:
+            self.best_loss = loss
+            self.best_weights = self.model.get_weights()
+            return
+
+        if self.best_weights is not None:
+            self.model.set_weights(self.best_weights)
+        self.model.stop_training = True
+
+
+class StopOnTimeLimit(keras.callbacks.Callback):
+    def __init__(self, max_seconds):
+        super().__init__()
+        self.max_seconds = max_seconds
+        self.start_time = None
+
+    def on_train_begin(self, logs=None):
+        self.start_time = time.time()
+
+    def on_epoch_end(self, epoch, logs=None):
+        if self.start_time is None:
+            return
+        elapsed = time.time() - self.start_time
+        if elapsed >= self.max_seconds:
+            self.model.stop_training = True
+
+
 def main():
     os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -172,7 +214,29 @@ def main():
     model = NeRF(nerf_model)
     model.compile(optimizer=keras.optimizers.Adam(1e-3), loss_fn=keras.losses.MeanSquaredError())
 
-    model.fit(train_ds, epochs=EPOCHS)
+    # Estimate time per epoch (warmup on 1 epoch)
+    import datetime
+    print(f"\n--- Starting training for {EPOCHS} epochs ---")
+    warmup_epochs = 1
+    t0 = time.time()
+    model.fit(
+        train_ds,
+        epochs=warmup_epochs,
+        callbacks=[keras.callbacks.LambdaCallback()],
+        verbose=0,
+    )
+    t1 = time.time()
+    seconds_per_epoch = max((t1 - t0) / warmup_epochs, 1e-3)
+    total_est = seconds_per_epoch * EPOCHS
+    eta = str(datetime.timedelta(seconds=int(total_est)))
+    print(f"Estimated time for {EPOCHS} epochs: {eta} (about {seconds_per_epoch:.1f} sec/epoch)\n")
+
+    # Actual training
+    history = model.fit(
+        train_ds,
+        epochs=EPOCHS,
+        callbacks=[StopOnRegression(), StopOnTimeLimit(MAX_TRAIN_SECONDS)],
+    )
 
     for name in os.listdir(MODEL_DIR):
         if name.lower().endswith(".keras"):
@@ -181,8 +245,9 @@ def main():
                 os.remove(candidate)
 
     nerf_model.save(MODEL_PATH)
+    trained_epochs = len(history.history.get("loss", []))
     with open(MODEL_META_PATH, "w", encoding="utf-8") as meta_file:
-        meta_file.write(f"epochs={EPOCHS}\n")
+        meta_file.write(f"epochs={trained_epochs}\n")
 
     print("Saved model to:", MODEL_PATH)
 
