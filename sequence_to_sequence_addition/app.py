@@ -8,16 +8,16 @@ import time
 TRAINING_SIZE = 50000
 REVERSE = True
 
-DIGITS = 6
-EPOCHS = 60
 BATCH_SIZE = 32
 
-# Maximum length of input is 'int + int' (e.g., '345+678'). Maximum length of
-# int is DIGITS.
-MAXLEN = DIGITS + 1 + DIGITS
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-MODEL_FILENAME = f"model_{DIGITS}digits_{EPOCHS}epochs.keras"
-MODEL_PATH = os.path.join(MODELS_DIR, MODEL_FILENAME)
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+# Automatically grab the latest model if one exists
+existing_models = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
+existing_models.sort(reverse=True)
+MODEL_FILENAME = existing_models[0] if existing_models else ""
+MODEL_PATH = os.path.join(MODELS_DIR, MODEL_FILENAME) if MODEL_FILENAME else ""
 
 
 class CharacterTable:
@@ -66,141 +66,143 @@ class CharacterTable:
 chars = "0123456789+ "
 ctable = CharacterTable(chars)
 
-if os.path.exists(MODEL_PATH):
+model = None
+MAXLEN = 0
+if MODEL_PATH and os.path.exists(MODEL_PATH):
     print("Loading existing model.")
     model = keras.models.load_model(MODEL_PATH)
-else:
-    questions = []
-    expected = []
-    seen = set()
-    print("Generating data...")
-    while len(questions) < TRAINING_SIZE:
-        f = lambda: int(
-            "".join(
-                np.random.choice(list("0123456789"))
-                for i in range(np.random.randint(1, DIGITS + 1))
-            )
-        )
-        a, b = f(), f()
-        # Skip any addition questions we've already seen
-        # Also skip any such that x+Y == Y+x (hence the sorting).
-        key = tuple(sorted((a, b)))
-        if key in seen:
-            continue
-        seen.add(key)
-        # Pad the data with spaces such that it is always MAXLEN.
-        q = "{}+{}".format(a, b)
-        query = q + " " * (MAXLEN - len(q))
-        ans = str(a + b)
-        # Answers can be of maximum size DIGITS + 1.
-        ans += " " * (DIGITS + 1 - len(ans))
-        if REVERSE:
-            # Reverse the query, e.g., '12+345 ' becomes ' 543+21'. (Note the
-            # space used for padding.)
-            query = query[::-1]
-        questions.append(query)
-        expected.append(ans)
-    print("Total questions:", len(questions))
-
-
-    print("Vectorization...")
-    x = np.zeros((len(questions), MAXLEN, len(chars)), dtype=bool)
-    y = np.zeros((len(questions), DIGITS + 1, len(chars)), dtype=bool)
-    for i, sentence in enumerate(questions):
-        x[i] = ctable.encode(sentence, MAXLEN)
-    for i, sentence in enumerate(expected):
-        y[i] = ctable.encode(sentence, DIGITS + 1)
-
-    # Shuffle (x, y) in unison as the later parts of x will almost all be larger
-    # digits.
-    indices = np.arange(len(y))
-    np.random.shuffle(indices)
-    x = x[indices]
-    y = y[indices]
-
-    # Explicitly set apart 10% for validation data that we never train over.
-    split_at = len(x) - len(x) // 10
-    (x_train, x_val) = x[:split_at], x[split_at:]
-    (y_train, y_val) = y[:split_at], y[split_at:]
-
-    print("Training Data:")
-    print(x_train.shape)
-    print(y_train.shape)
-
-    print("Validation Data:")
-    print(x_val.shape)
-    print(y_val.shape)
-
-
-    print("Build model...")
-    num_layers = 1  # Try to add more LSTM layers!
-
-    model = keras.Sequential()
-    # "Encode" the input sequence using a LSTM, producing an output of size 128.
-    # Note: In a situation where your input sequences have a variable length,
-    # use input_shape=(None, num_feature).
-    model.add(layers.Input((MAXLEN, len(chars))))
-    model.add(layers.LSTM(128))
-    # As the decoder RNN's input, repeatedly provide with the last output of
-    # RNN for each time step. Repeat 'DIGITS + 1' times as that's the maximum
-    # length of output, e.g., when DIGITS=3, max output is 999+999=1998.
-    model.add(layers.RepeatVector(DIGITS + 1))
-    # The decoder RNN could be multiple layers stacked or a single layer.
-    for _ in range(num_layers):
-        # By setting return_sequences to True, return not only the last output but
-        # all the outputs so far in the form of (num_samples, timesteps,
-        # output_dim). This is necessary as TimeDistributed in the below expects
-        # the first dimension to be the timesteps.
-        model.add(layers.LSTM(128, return_sequences=True))
-
-    # Apply a dense layer to the every temporal slice of an input. For each of step
-    # of the output sequence, decide which character should be chosen.
-    model.add(layers.Dense(len(chars), activation="softmax"))
-    model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
-    model.summary()
-
-    class ETACallback(keras.callbacks.Callback):
-        def on_train_begin(self, logs=None):
-            self.epoch_times = []
-
-        def on_epoch_begin(self, epoch, logs=None):
-            self.epoch_start_time = time.time()
-
-        def on_epoch_end(self, epoch, logs=None):
-            epoch_time = time.time() - self.epoch_start_time
-            self.epoch_times.append(epoch_time)
-            avg_time_per_epoch = sum(self.epoch_times) / len(self.epoch_times)
-            remaining_epochs = self.params['epochs'] - (epoch + 1)
-            eta_seconds = avg_time_per_epoch * remaining_epochs
-            
-            mins, secs = divmod(int(eta_seconds), 60)
-            hours, mins = divmod(mins, 60)
-            eta_str = f"{hours}h {mins}m {secs}s" if hours > 0 else f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-            print(f" - Overall Training ETA: {eta_str}")
-
-    # Train the model each generation and show predictions against the validation
-    # dataset.
-    model.fit(
-        x_train,
-        y_train,
-        batch_size=BATCH_SIZE,
-        epochs=EPOCHS,
-        validation_data=(x_val, y_val),
-        callbacks=[ETACallback()]
-    )
-    
-    print(f"Saving model to {MODEL_PATH}")
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    model.save(MODEL_PATH)
+    MAXLEN = model.input_shape[1]
 
 print("\n\nLaunching GUI...")
 import tkinter as tk
 from tkinter import ttk
 from tkinter import simpledialog, messagebox
+import threading
+
+def start_training():
+    train_digits = simpledialog.askinteger("Train Model", "How many digits to train on?", parent=root, minvalue=1, initialvalue=6)
+    if not train_digits: return
+    
+    train_epochs = simpledialog.askinteger("Train Model", "How many epochs max?", parent=root, minvalue=1, initialvalue=60)
+    if not train_epochs: return
+    
+    train_window = tk.Toplevel(root)
+    train_window.title("Training Model")
+    train_window.geometry("500x180")
+    
+    status_var = tk.StringVar(value="Preparing to train...")
+    tk.Label(train_window, textvariable=status_var, font=("Helvetica", 12, "bold")).pack(pady=(20, 5))
+    
+    progress_var = tk.DoubleVar(value=0)
+    progress_bar = ttk.Progressbar(train_window, variable=progress_var, maximum=train_epochs, length=400)
+    progress_bar.pack(pady=10)
+    
+    metrics_var = tk.StringVar(value="")
+    tk.Label(train_window, textvariable=metrics_var, font=("Courier", 10)).pack(pady=5)
+    
+    def update_status(msg):
+        root.after(0, lambda: status_var.set(msg))
+        
+    def update_metrics(epoch, metrics_text):
+        def apply_updates():
+            progress_var.set(epoch)
+            metrics_var.set(metrics_text)
+        root.after(0, apply_updates)
+        
+    def run_training():
+        update_status(f"Generating data for {train_digits}-digit addition...")
+        local_maxlen = train_digits + 1 + train_digits
+        questions = []
+        expected = []
+        seen = set()
+        while len(questions) < TRAINING_SIZE:
+            f = lambda: int("".join(np.random.choice(list("0123456789")) for i in range(np.random.randint(1, train_digits + 1))))
+            a, b = f(), f()
+            key = tuple(sorted((a, b)))
+            if key in seen: continue
+            seen.add(key)
+            q = "{}+{}".format(a, b)
+            query = q + " " * (local_maxlen - len(q))
+            ans = str(a + b)
+            ans += " " * (train_digits + 1 - len(ans))
+            if REVERSE: query = query[::-1]
+            questions.append(query)
+            expected.append(ans)
+        
+        update_status("Vectorizing data...")
+        x = np.zeros((len(questions), local_maxlen, len(chars)), dtype=bool)
+        y = np.zeros((len(questions), train_digits + 1, len(chars)), dtype=bool)
+        for i, sentence in enumerate(questions):
+            x[i] = ctable.encode(sentence, local_maxlen)
+        for i, sentence in enumerate(expected):
+            y[i] = ctable.encode(sentence, train_digits + 1)
+        
+        indices = np.arange(len(y))
+        np.random.shuffle(indices)
+        x = x[indices]
+        y = y[indices]
+        
+        split_at = len(x) - len(x) // 10
+        (x_train, x_val) = x[:split_at], x[split_at:]
+        (y_train, y_val) = y[:split_at], y[split_at:]
+        
+        update_status("Building model...")
+        new_model = keras.Sequential()
+        new_model.add(layers.Input((local_maxlen, len(chars))))
+        new_model.add(layers.LSTM(128))
+        new_model.add(layers.RepeatVector(train_digits + 1))
+        new_model.add(layers.LSTM(128, return_sequences=True))
+        new_model.add(layers.Dense(len(chars), activation="softmax"))
+        new_model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
+        
+        class GUICallback(keras.callbacks.Callback):
+            def on_train_begin(self, logs=None):
+                self.epoch_times = []
+                update_status("Training in progress...")
+            def on_epoch_begin(self, epoch, logs=None):
+                self.epoch_start_time = time.time()
+            def on_epoch_end(self, epoch, logs=None):
+                epoch_time = time.time() - self.epoch_start_time
+                self.epoch_times.append(epoch_time)
+                avg = sum(self.epoch_times) / len(self.epoch_times)
+                rem = self.params['epochs'] - (epoch + 1)
+                mins, secs = divmod(int(avg * rem), 60)
+                hrs, mins = divmod(mins, 60)
+                eta_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+                
+                m_text = f"Epoch {epoch+1}/{self.params['epochs']} | ETA: {eta_str}\nloss: {logs.get('loss',0):.4f} | acc: {logs.get('accuracy',0):.4f} | val_loss: {logs.get('val_loss',0):.4f} | val_acc: {logs.get('val_accuracy',0):.4f}"
+                update_metrics(epoch + 1, m_text)
+
+        early_stopping = keras.callbacks.EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
+        
+        history = new_model.fit(
+            x_train, y_train, batch_size=BATCH_SIZE, epochs=train_epochs,
+            validation_data=(x_val, y_val), callbacks=[GUICallback(), early_stopping], verbose=0
+        )
+        
+        actual_epochs = len(history.epoch)
+        filename = f"model_{train_digits}digits_{actual_epochs}epochs.keras"
+        path = os.path.join(MODELS_DIR, filename)
+        new_model.save(path)
+        update_status(f"Training complete! Saved as {filename}")
+        
+        def update_main_ui():
+            available_models = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
+            available_models.sort(reverse=True)
+            dropdown['values'] = available_models
+            model_var.set(filename)
+            on_model_select()
+            tk.Button(train_window, text="Close", command=train_window.destroy).pack(pady=5)
+            
+        root.after(0, update_main_ui) # Safely update GUI from the training thread
+
+    threading.Thread(target=run_training, daemon=True).start()
 
 def on_model_select(event=None):
     global model, MAXLEN
     selected_file = model_var.get()
+    if not selected_file:
+        return
     path = os.path.join(MODELS_DIR, selected_file)
     print(f"Loading model {selected_file}...")
     model = keras.models.load_model(path)
@@ -209,6 +211,9 @@ def on_model_select(event=None):
     result_label.config(text=f"Loaded {selected_file}", fg="blue")
 
 def predict_equation(event=None):
+    if not model:
+        messagebox.showwarning("No Model", "Please select or train a model first.", parent=root)
+        return
     user_input = entry.get()
     if not user_input:
         return
@@ -254,6 +259,9 @@ def predict_equation(event=None):
     result_label.config(text=f"Result: {guess_stripped}", fg=color)
 
 def auto_test():
+    if not model:
+        messagebox.showwarning("No Model", "Please select or train a model first.", parent=root)
+        return
     num_tests = simpledialog.askinteger("Auto Test", "How many additions to test?", parent=root, minvalue=1)
     if not num_tests:
         return
@@ -334,7 +342,7 @@ def auto_test():
 # Set up the Tkinter desktop window
 root = tk.Tk()
 root.title("RNN Addition")
-root.geometry("400x300")
+root.geometry("400x340")
 
 tk.Label(root, text="Select Model:", font=("Helvetica", 12)).pack(pady=(10, 0))
 
@@ -342,7 +350,7 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 available_models = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
 available_models.sort(reverse=True)
 
-model_var = tk.StringVar(value=MODEL_FILENAME if MODEL_FILENAME in available_models else available_models[0])
+model_var = tk.StringVar(value=available_models[0] if available_models else "")
 dropdown = ttk.Combobox(root, textvariable=model_var, values=available_models, state="readonly", width=35)
 dropdown.pack(pady=5)
 dropdown.bind("<<ComboboxSelected>>", on_model_select)
@@ -356,6 +364,7 @@ entry.focus()
 
 tk.Button(root, text="Calculate", font=("Helvetica", 12), command=predict_equation).pack(pady=5)
 tk.Button(root, text="Auto Test", font=("Helvetica", 12), command=auto_test).pack(pady=5)
+tk.Button(root, text="Train New Model", font=("Helvetica", 12), command=start_training).pack(pady=5)
 
 result_label = tk.Label(root, text="", font=("Helvetica", 16, "bold"))
 result_label.pack(pady=10)
