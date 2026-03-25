@@ -1,0 +1,49 @@
+Notes for presentation
+
+What this app does
+- It classifies a picture as a cat or a dog using a trained neural network.
+- I can load an image from a file or paste one from the clipboard.
+- The app shows the picture and a confidence score for cat vs dog.
+
+Where the model comes from
+- I trained the model in the notebook (image_classification.ipynb).
+- The best model is saved as a .keras file in the models folder.
+- The app lets me switch between different models in that folder.
+
+Training basics (simple explanations)
+- Epochs: one full pass through the training images. More epochs can improve learning but too many can overfit.
+- Batch size: how many images the model sees at once before updating its weights. Bigger batches are faster but can generalize worse.
+- Learning rate: how big each update step is. Too high can make training unstable; too low can make it slow.
+- Validation split: I keep some images aside to test how well the model does on data it did not train on.
+
+Model size (simple description)
+- The model is a small CNN with 3 convolution blocks, pooling, global average pooling, and a final dense layer.
+- It is about 16 layers total if you count the input layer.
+
+How I keep the best model
+- I use a checkpoint that saves the model only when validation loss improves.
+- Early stopping can stop training if validation loss stops getting better.
+- This means I keep the strongest version of the model, not just the last one.
+
+How prediction works (simple version)
+- The image is resized to 180x180 and converted to numbers.
+- The model outputs a score between 0 and 1.
+- If the score is closer to 1, it says dog. If closer to 0, it says cat.
+
+Why this is useful
+- It shows how machine learning can recognize images.
+- The UI makes it easy to test the model with new photos.
+
+Things I can mention if asked
+- I used Keras and TensorFlow for the model.
+- I used PyQt6 to build the desktop interface.
+- The models folder lets me compare different trained models later.
+
+Quick stats 
+- Input size: 180x180 RGB images
+- Batch size: 32
+- Epochs: 125 (with early stopping)
+- Validation split: 20%
+- Optimizer: Adam (lr=3e-4)
+- Loss: Binary cross-entropy (from logits)
+- Data augmentation: random flip + small rotation
