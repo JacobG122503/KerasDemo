@@ -2,16 +2,22 @@ import keras
 from keras import layers
 import numpy as np
 import os
+import time
 
 # Parameters for the model and dataset.
 TRAINING_SIZE = 50000
-DIGITS = 3
 REVERSE = True
+
+DIGITS = 6
+EPOCHS = 30
+BATCH_SIZE = 32
 
 # Maximum length of input is 'int + int' (e.g., '345+678'). Maximum length of
 # int is DIGITS.
 MAXLEN = DIGITS + 1 + DIGITS
-MODEL_PATH = "model.keras"
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+MODEL_FILENAME = f"model_{DIGITS}digits_{EPOCHS}epochs.keras"
+MODEL_PATH = os.path.join(MODELS_DIR, MODEL_FILENAME)
 
 
 class CharacterTable:
@@ -153,41 +159,72 @@ else:
     model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
     model.summary()
 
+    class ETACallback(keras.callbacks.Callback):
+        def on_train_begin(self, logs=None):
+            self.epoch_times = []
 
-    # Training parameters.
-    epochs = 30
-    batch_size = 32
+        def on_epoch_begin(self, epoch, logs=None):
+            self.epoch_start_time = time.time()
+
+        def on_epoch_end(self, epoch, logs=None):
+            epoch_time = time.time() - self.epoch_start_time
+            self.epoch_times.append(epoch_time)
+            avg_time_per_epoch = sum(self.epoch_times) / len(self.epoch_times)
+            remaining_epochs = self.params['epochs'] - (epoch + 1)
+            eta_seconds = avg_time_per_epoch * remaining_epochs
+            
+            mins, secs = divmod(int(eta_seconds), 60)
+            hours, mins = divmod(mins, 60)
+            eta_str = f"{hours}h {mins}m {secs}s" if hours > 0 else f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+            print(f" - Overall Training ETA: {eta_str}")
 
     # Train the model each generation and show predictions against the validation
     # dataset.
     model.fit(
         x_train,
         y_train,
-        batch_size=batch_size,
-        epochs=epochs,
+        batch_size=BATCH_SIZE,
+        epochs=EPOCHS,
         validation_data=(x_val, y_val),
+        callbacks=[ETACallback()]
     )
     
     print(f"Saving model to {MODEL_PATH}")
+    os.makedirs(MODELS_DIR, exist_ok=True)
     model.save(MODEL_PATH)
 
-print("\n\nReady to test!")
-print("Enter an addition problem (e.g. 123+456) or 'quit' to exit.")
+print("\n\nLaunching GUI...")
+import tkinter as tk
+from tkinter import ttk
+from tkinter import simpledialog, messagebox
 
-while True:
-    user_input = input("Input: ")
-    if user_input.lower() == 'quit':
-        break
+def on_model_select(event=None):
+    global model, MAXLEN
+    selected_file = model_var.get()
+    path = os.path.join(MODELS_DIR, selected_file)
+    print(f"Loading model {selected_file}...")
+    model = keras.models.load_model(path)
+    # Dynamically update MAXLEN based on the loaded model's input shape
+    MAXLEN = model.input_shape[1]
+    result_label.config(text=f"Loaded {selected_file}", fg="blue")
+
+def predict_equation(event=None):
+    user_input = entry.get()
+    if not user_input:
+        return
+
+    # Strip spaces so "1 + 1" becomes "1+1" (which the model expects)
+    user_input = user_input.replace(" ", "")
 
     # Validate input length
     if len(user_input) > MAXLEN:
-        print(f"Input too long! Maximum allowed length is {MAXLEN} characters.")
-        continue
+        result_label.config(text=f"Input too long! Max {MAXLEN} chars.", fg="red")
+        return
 
     # Validate characters
     if any(c not in chars for c in user_input):
-        print("Invalid characters! Only digits and '+' are allowed.")
-        continue
+        result_label.config(text="Invalid chars! Only digits and '+'", fg="red")
+        return
 
     # Pre-process the user input
     query = user_input + " " * (MAXLEN - len(user_input))
@@ -203,5 +240,126 @@ while True:
     
     # Decode the prediction
     guess = ctable.decode(preds[0], calc_argmax=True)
+    guess_stripped = guess.strip()
+    
+    # Check correctness
+    color = "black"
+    try:
+        a, b = user_input.split('+')
+        expected = str(int(a) + int(b))
+        color = "green" if guess_stripped == expected else "red"
+    except Exception:
+        pass # Fallback to black if input isn't a standard 'a+b' format
+        
+    result_label.config(text=f"Result: {guess_stripped}", fg=color)
 
-    print("Result:", guess)
+def auto_test():
+    num_tests = simpledialog.askinteger("Auto Test", "How many additions to test?", parent=root, minvalue=1, maxvalue=50000)
+    num_tests = simpledialog.askinteger("Auto Test", "How many additions to test?", parent=root, minvalue=1)
+    if not num_tests:
+        return
+        
+    # Create a new window for the scrolling results
+    test_window = tk.Toplevel(root)
+    test_window.title("Auto Test Results")
+    test_window.geometry("400x500")
+    
+    text_area = tk.Text(test_window, font=("Courier", 14), state=tk.NORMAL)
+    scrollbar = ttk.Scrollbar(test_window, command=text_area.yview)
+    text_area.configure(yscrollcommand=scrollbar.set)
+    
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+    text_area.tag_config("correct", foreground="green")
+    text_area.tag_config("wrong", foreground="red")
+    text_area.tag_config("stats", foreground="blue", font=("Helvetica", 14, "bold"))
+
+    # Dynamically figure out the max digits based on the loaded model's MAXLEN
+    current_digits = (MAXLEN - 1) // 2
+    questions = []
+    expected = []
+    raw_questions = []
+    
+    for _ in range(num_tests):
+        f = lambda: int(
+            "".join(
+                np.random.choice(list("0123456789"))
+                for i in range(np.random.randint(1, current_digits + 1))
+            )
+        )
+        a, b = f(), f()
+        q = "{}+{}".format(a, b)
+        query = q + " " * (MAXLEN - len(q))
+        ans = str(a + b)
+        ans += " " * (current_digits + 1 - len(ans))
+        if REVERSE:
+            query = query[::-1]
+        questions.append(query)
+        expected.append(ans)
+        raw_questions.append(q)
+        
+    x_test = np.zeros((num_tests, MAXLEN, len(chars)), dtype=bool)
+    for i, sentence in enumerate(questions):
+        x_test[i] = ctable.encode(sentence, MAXLEN)
+        
+    preds = model.predict(x_test, verbose=0)
+    
+    correct = 0
+    for i in range(num_tests):
+        guess = ctable.decode(preds[i], calc_argmax=True)
+        is_correct = guess == expected[i]
+        
+        if is_correct:
+            correct += 1
+            tag = "correct"
+            mark = "☑"
+        else:
+            tag = "wrong"
+            mark = "☒"
+            
+        display_text = f"{raw_questions[i]:>9} = {guess.strip():<5} {mark}\n"
+        text_area.insert(tk.END, display_text, tag)
+        
+        # Update the UI periodically so it visually scrolls
+        if i % 50 == 0:
+            text_area.see(tk.END)
+            text_area.update()
+            
+    accuracy = (correct / num_tests) * 100
+    stats_text = f"\nTested {num_tests} equations.\nCorrect: {correct}\nIncorrect: {num_tests - correct}\nAccuracy: {accuracy:.2f}%\n"
+    text_area.insert(tk.END, stats_text, "stats")
+    text_area.see(tk.END)
+    text_area.config(state=tk.DISABLED) # Make read-only when finished
+
+# Set up the Tkinter desktop window
+root = tk.Tk()
+root.title("RNN Addition")
+root.geometry("400x300")
+
+tk.Label(root, text="Select Model:", font=("Helvetica", 12)).pack(pady=(10, 0))
+
+os.makedirs(MODELS_DIR, exist_ok=True)
+available_models = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
+available_models.sort(reverse=True)
+
+model_var = tk.StringVar(value=MODEL_FILENAME if MODEL_FILENAME in available_models else available_models[0])
+dropdown = ttk.Combobox(root, textvariable=model_var, values=available_models, state="readonly", width=35)
+dropdown.pack(pady=5)
+dropdown.bind("<<ComboboxSelected>>", on_model_select)
+
+tk.Label(root, text="Enter an addition problem:", font=("Helvetica", 14)).pack(pady=(10, 5))
+
+entry = tk.Entry(root, font=("Helvetica", 16), justify="center")
+entry.pack(pady=5)
+entry.bind('<Return>', predict_equation) # Allows hitting the Enter key to solve
+entry.focus()
+
+tk.Button(root, text="Calculate", font=("Helvetica", 12), command=predict_equation).pack(pady=5)
+tk.Button(root, text="Auto Test", font=("Helvetica", 12), command=auto_test).pack(pady=5)
+
+result_label = tk.Label(root, text="", font=("Helvetica", 16, "bold"))
+result_label.pack(pady=10)
+
+# Launch the app
+root.mainloop()
