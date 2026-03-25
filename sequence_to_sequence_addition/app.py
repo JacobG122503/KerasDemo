@@ -9,7 +9,7 @@ TRAINING_SIZE = 50000
 REVERSE = True
 
 DIGITS = 6
-EPOCHS = 30
+EPOCHS = 60
 BATCH_SIZE = 32
 
 # Maximum length of input is 'int + int' (e.g., '345+678'). Maximum length of
@@ -254,7 +254,6 @@ def predict_equation(event=None):
     result_label.config(text=f"Result: {guess_stripped}", fg=color)
 
 def auto_test():
-    num_tests = simpledialog.askinteger("Auto Test", "How many additions to test?", parent=root, minvalue=1, maxvalue=50000)
     num_tests = simpledialog.askinteger("Auto Test", "How many additions to test?", parent=root, minvalue=1)
     if not num_tests:
         return
