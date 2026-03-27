@@ -18,9 +18,9 @@ if [ ! -d "cluster_venv" ]; then
     python3 -m venv cluster_venv
     source cluster_venv/bin/activate
     pip install --upgrade pip
-    pip install keras tensorflow numpy
 fi
 source cluster_venv/bin/activate
+pip install keras tensorflow numpy tqdm
 
 # Run the headless python training script
 echo "Starting Keras Training..."
