@@ -2,16 +2,21 @@ import keras
 from keras import layers
 import numpy as np
 import os
+from tqdm import tqdm
+import time
 
 # Parameters for the model and dataset.
 TRAINING_SIZE = 50000
 REVERSE = True
 BATCH_SIZE = 32
-TRAIN_DIGITS = 3
-EPOCH_MILESTONES = [10, 30, 60]
+
+TRAIN_DIGITS = 6
+TOTAL_EPOCHS = 100
+
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 os.makedirs(MODELS_DIR, exist_ok=True)
+
 
 class CharacterTable:
     def __init__(self, chars):
@@ -31,6 +36,7 @@ class CharacterTable:
             x = x.argmax(axis=-1)
         return "".join(self.indices_char[x] for x in x)
 
+
 chars = "0123456789+ "
 ctable = CharacterTable(chars)
 
@@ -41,10 +47,14 @@ expected = []
 seen = set()
 
 while len(questions) < TRAINING_SIZE:
-    f = lambda: int("".join(np.random.choice(list("0123456789")) for i in range(np.random.randint(1, TRAIN_DIGITS + 1))))
+    f = lambda: int(
+        "".join(
+            np.random.choice(list("0123456789"))
+            for i in range(np.random.randint(1, TRAIN_DIGITS + 1))
+        )
+    )
     a, b = f(), f()
     key = tuple(sorted((a, b)))
-    if key in seen: continue
     seen.add(key)
     q = "{}+{}".format(a, b)
     query = q + " " * (local_maxlen - len(q))
@@ -70,17 +80,62 @@ model.add(layers.RepeatVector(TRAIN_DIGITS + 1))
 model.add(layers.LSTM(128, return_sequences=True))
 model.add(layers.Dense(len(chars), activation="softmax"))
 model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
+model.summary()
 
-previous_epoch = 0
-for target_epoch in EPOCH_MILESTONES:
-    print(f"\n--- Training model up to {target_epoch} epochs ---")
-    model.fit(x, y, batch_size=BATCH_SIZE, epochs=target_epoch, initial_epoch=previous_epoch, validation_split=0.1, verbose=1)
-    
-    filename = f"model_{TRAIN_DIGITS}digits_{target_epoch}epochs.keras"
-    path = os.path.join(MODELS_DIR, filename)
-    model.save(path)
-    print(f"Saved checkpoint: {filename}")
-    
-    previous_epoch = target_epoch
+class TqdmProgressCallback(keras.callbacks.Callback):
+    """A Keras callback to render a progress bar for epochs using tqdm."""
 
-print("All training complete!")
+    def on_train_begin(self, logs=None):
+        self.epochs = self.params["epochs"]
+        self.pbar = tqdm(total=self.epochs, desc="Epochs", unit="epoch")
+        self.epoch_times = []
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch_start_time = time.time()
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+
+        epoch_time = time.time() - self.epoch_start_time
+        self.epoch_times.append(epoch_time)
+        avg_time = sum(self.epoch_times) / len(self.epoch_times)
+        remaining_epochs = self.params['epochs'] - (epoch + 1)
+        eta_seconds = int(avg_time * remaining_epochs)
+
+        mins, secs = divmod(eta_seconds, 60)
+        hrs, mins = divmod(mins, 60)
+
+        eta_str = ""
+        if hrs > 0:
+            eta_str = f"{hrs}h {mins}m {secs}s"
+        elif mins > 0:
+            eta_str = f"{mins}m {secs}s"
+        else:
+            eta_str = f"{secs}s"
+
+        self.pbar.update(1)
+        self.pbar.set_postfix(
+            {
+                "loss": f"{logs.get('loss', 0):.4f}",
+                "acc": f"{logs.get('accuracy', 0):.4f}",
+                "val_loss": f"{logs.get('val_loss', 0):.4f}",
+                "val_acc": f"{logs.get('val_accuracy', 0):.4f}",
+                "ETA": eta_str,
+            }
+        )
+
+    def on_train_end(self, logs=None):
+        self.pbar.close()
+
+
+print(f"\n--- Training model for {TOTAL_EPOCHS} epochs ---")
+model.fit(
+    x, y, batch_size=BATCH_SIZE, epochs=TOTAL_EPOCHS, validation_split=0.1, verbose=0, callbacks=[TqdmProgressCallback()]
+)
+
+filename = f"model_{TRAIN_DIGITS}digits_{TOTAL_EPOCHS}epochs.keras"
+path = os.path.join(MODELS_DIR, filename)
+model.save(path)
+print(f"\nSaved final model: {filename}")
+
+print("\nTraining complete!")

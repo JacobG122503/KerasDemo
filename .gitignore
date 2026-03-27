@@ -156,12 +156,6 @@ PetImages/
 outputs/
 3DRendering/outputs/
 
-# Models folder
-models/
-cats_vs_dogs/models/
-3DRendering/models/
-drawdemo/mnist_model.keras
-
 # OS-specific
 .DS_Store
 sequence_to_sequence_addition/training_log*
