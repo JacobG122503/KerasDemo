@@ -1,0 +1,7 @@
+tensorflow
+keras
+numpy<2.0
+matplotlib
+gradio
+requests
+tensorboard
