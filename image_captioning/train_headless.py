@@ -443,14 +443,14 @@ for epochs in EPOCHS_PER_RUN:
     except ValueError as save_exc:
         print(f"Warning: caption_model.save_weights skipped: {save_exc}")
 
-    cnn_model.save(f"{model_save_path}/cnn_model")
-    encoder.save(f"{model_save_path}/encoder")
-    decoder.save(f"{model_save_path}/decoder")
+    cnn_model.save(f"{model_save_path}/cnn_model.keras")
+    np.savez(f"{model_save_path}/encoder_weights.npz", *encoder.get_weights())
+    np.savez(f"{model_save_path}/decoder_weights.npz", *decoder.get_weights())
 
     # Save the TextVectorization layer
     text_vec_model = keras.Sequential([vectorization])
     text_vec_model.compile()
-    text_vec_model.save(f"{model_save_path}/text_vectorization")
+    text_vec_model.save(f"{model_save_path}/text_vectorization.keras")
 
     print(f"--- Training and saving for {epochs} epochs complete ---")
 
