@@ -63,8 +63,10 @@ class PositionalEmbedding(layers.Layer):
         length = tf.shape(inputs)[-1]
         positions = tf.range(start=0, limit=length, delta=1)
         embedded_tokens = self.token_embeddings(inputs)
-        embedded_tokens = embedded_tokens * self.embed_scale
+        scale = tf.cast(self.embed_scale, embedded_tokens.dtype)
+        embedded_tokens = embedded_tokens * scale
         embedded_positions = self.position_embeddings(positions)
+        embedded_positions = tf.cast(embedded_positions, embedded_tokens.dtype)
         return embedded_tokens + embedded_positions
 
 class TransformerDecoderBlock(layers.Layer):

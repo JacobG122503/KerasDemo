@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import time
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
@@ -10,6 +11,7 @@ import numpy as np
 import tensorflow as tf
 import keras
 from keras import layers
+from keras import mixed_precision
 from keras.applications import efficientnet_v2
 from keras.layers import TextVectorization
 from keras.callbacks import EarlyStopping, TensorBoard
@@ -27,8 +29,84 @@ from model_definition import (
 IMAGES_PATH = "Flicker8k_Dataset"
 IMAGE_SIZE = (299, 299)
 BATCH_SIZE = 64
-EPOCHS_PER_RUN = [10,30,60,100] # Example: [20, 30, 40] or just [100]
+EPOCHS_PER_RUN = [1,10,30,60,100] # Example: [20, 30, 40] or just [100]
 AUTOTUNE = tf.data.AUTOTUNE
+ENABLE_DATASET_DISK_CACHE = True
+JOB_ID = os.environ.get("SLURM_JOB_ID", "local")
+DATASET_CACHE_DIR = os.path.join("cache", JOB_ID)
+PYTHON_BIN = sys.executable
+
+
+def env_flag(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# XLA can be unstable on some cluster CUDA/compiler combinations.
+# Keep it off by default on SLURM unless explicitly enabled.
+DEFAULT_XLA = False if os.environ.get("SLURM_JOB_ID") else True
+ENABLE_XLA = env_flag("CAPTION_ENABLE_XLA", DEFAULT_XLA)
+
+# Mixed precision can trigger low-level runtime instability on some cluster stacks.
+# Keep it off by default on SLURM unless explicitly enabled.
+DEFAULT_MIXED_PRECISION = False if os.environ.get("SLURM_JOB_ID") else True
+ENABLE_MIXED_PRECISION = env_flag("CAPTION_ENABLE_MIXED_PRECISION", DEFAULT_MIXED_PRECISION)
+
+# Cluster-safe mode trades speed for stability to avoid low-level TF runtime exits.
+IS_SLURM = bool(os.environ.get("SLURM_JOB_ID"))
+DEFAULT_CLUSTER_SAFE = True if IS_SLURM else False
+ENABLE_CLUSTER_SAFE = env_flag("CAPTION_CLUSTER_SAFE", DEFAULT_CLUSTER_SAFE)
+
+if ENABLE_CLUSTER_SAFE:
+    BATCH_SIZE = int(os.environ.get("CAPTION_BATCH_SIZE", "16"))
+    ENABLE_DATASET_DISK_CACHE = env_flag("CAPTION_ENABLE_DATASET_DISK_CACHE", False)
+    AUTOTUNE = 1
+
+# Global runtime performance knobs.
+if ENABLE_XLA:
+    tf.config.optimizer.set_jit(True)
+
+if ENABLE_MIXED_PRECISION and tf.config.list_physical_devices("GPU"):
+    mixed_precision.set_global_policy("mixed_float16")
+
+if ENABLE_CLUSTER_SAFE:
+    tf.config.run_functions_eagerly(True)
+
+print("XLA enabled:", ENABLE_XLA)
+print("Mixed precision enabled:", ENABLE_MIXED_PRECISION)
+print("Cluster safe mode:", ENABLE_CLUSTER_SAFE)
+print("Batch size:", BATCH_SIZE)
+print("Dataset disk cache enabled:", ENABLE_DATASET_DISK_CACHE)
+print("Physical GPUs:", tf.config.list_physical_devices("GPU"))
+print("Logical GPUs:", tf.config.list_logical_devices("GPU"))
+
+for gpu in tf.config.list_physical_devices("GPU"):
+    try:
+        tf.config.experimental.set_memory_growth(gpu, True)
+    except Exception:
+        pass
+
+
+def get_distribution_strategy():
+    visible_gpus = tf.config.list_physical_devices("GPU")
+    tf_config = os.environ.get("TF_CONFIG")
+
+    if tf_config:
+        strategy = tf.distribute.MultiWorkerMirroredStrategy()
+    elif len(visible_gpus) > 1:
+        strategy = tf.distribute.MirroredStrategy()
+    else:
+        strategy = tf.distribute.get_strategy()
+
+    print("TensorFlow distribution strategy:", type(strategy).__name__)
+    print("Visible GPUs:", len(visible_gpus))
+    print("Replicas in sync:", strategy.num_replicas_in_sync)
+    return strategy
+
+
+strategy = get_distribution_strategy()
 
 # Preparing the dataset
 def load_captions_data(filename):
@@ -108,16 +186,29 @@ def decode_and_resize(img_path):
 def process_input(img_path, captions):
     return decode_and_resize(img_path), vectorization(captions)
 
-def make_dataset(images, captions):
+def make_dataset(images, captions, dataset_name):
     dataset = tf.data.Dataset.from_tensor_slices((images, captions))
-    dataset = dataset.shuffle(BATCH_SIZE * 8)
     dataset = dataset.map(process_input, num_parallel_calls=AUTOTUNE)
+
+    if ENABLE_DATASET_DISK_CACHE:
+        os.makedirs(DATASET_CACHE_DIR, exist_ok=True)
+        cache_path = os.path.join(DATASET_CACHE_DIR, f"{dataset_name}.cache")
+        dataset = dataset.cache(cache_path)
+
+    options = tf.data.Options()
+    options.experimental_deterministic = False
+    options.experimental_distribute.auto_shard_policy = (
+        tf.data.experimental.AutoShardPolicy.DATA
+    )
+    dataset = dataset.with_options(options)
+
+    dataset = dataset.shuffle(BATCH_SIZE * 8, reshuffle_each_iteration=True)
     dataset = dataset.batch(BATCH_SIZE).prefetch(AUTOTUNE)
     return dataset
 
 # Create the datasets
-train_dataset = make_dataset(list(train_data.keys()), list(train_data.values()))
-valid_dataset = make_dataset(list(valid_data.keys()), list(valid_data.values()))
+train_dataset = make_dataset(list(train_data.keys()), list(train_data.values()), "train")
+valid_dataset = make_dataset(list(valid_data.keys()), list(valid_data.values()), "valid")
 
 # Building the model
 def get_cnn_model():
@@ -269,7 +360,7 @@ class HourlyProgressCallback(keras.callbacks.Callback):
                 email_body += f"Estimated time remaining: {estimated_remaining_time / 3600:.2f} hours.\n"
                 
                 subprocess.run([
-                    "python", "send_email.py",
+                    PYTHON_BIN, "send_email.py",
                     self.email_address,
                     email_subject,
                     email_body
@@ -277,19 +368,6 @@ class HourlyProgressCallback(keras.callbacks.Callback):
 
 for epochs in EPOCHS_PER_RUN:
     print(f"--- Training for {epochs} epochs ---")
-
-    # Model training
-    cnn_model = get_cnn_model()
-    encoder = TransformerEncoderBlock(embed_dim=EMBED_DIM, dense_dim=FF_DIM, num_heads=1)
-    decoder = TransformerDecoderBlock(embed_dim=EMBED_DIM, ff_dim=FF_DIM, num_heads=2)
-    caption_model = ImageCaptioningModel(
-        cnn_model=cnn_model, encoder=encoder, decoder=decoder, image_aug=image_augmentation
-    )
-
-    # Define the loss function
-    cross_entropy = keras.losses.SparseCategoricalCrossentropy(
-        from_logits=False, reduction="none"
-    )
 
     # EarlyStopping criteria
     early_stopping = EarlyStopping(patience=3, restore_best_weights=True)
@@ -320,8 +398,28 @@ for epochs in EPOCHS_PER_RUN:
     num_warmup_steps = num_train_steps // 15
     lr_schedule = LRSchedule(post_warmup_learning_rate=1e-4, warmup_steps=num_warmup_steps)
 
-    # Compile the model
-    caption_model.compile(optimizer=keras.optimizers.Adam(lr_schedule), loss=cross_entropy)
+    with strategy.scope():
+        # Model training
+        cnn_model = get_cnn_model()
+        encoder = TransformerEncoderBlock(embed_dim=EMBED_DIM, dense_dim=FF_DIM, num_heads=1)
+        decoder = TransformerDecoderBlock(embed_dim=EMBED_DIM, ff_dim=FF_DIM, num_heads=2)
+        caption_model = ImageCaptioningModel(
+            cnn_model=cnn_model, encoder=encoder, decoder=decoder, image_aug=image_augmentation
+        )
+
+        # Define the loss function
+        cross_entropy = keras.losses.SparseCategoricalCrossentropy(
+            from_logits=False, reduction="none"
+        )
+
+        # Compile the model
+        caption_model.compile(
+            optimizer=keras.optimizers.Adam(lr_schedule),
+            loss=cross_entropy,
+            jit_compile=ENABLE_XLA,
+            steps_per_execution=1 if ENABLE_CLUSTER_SAFE else 50,
+            run_eagerly=ENABLE_CLUSTER_SAFE,
+        )
 
     # Fit the model
     hourly_callback = HourlyProgressCallback("jacobgar@iastate.edu", epochs)
@@ -338,7 +436,13 @@ for epochs in EPOCHS_PER_RUN:
     if not os.path.exists(model_save_path):
         os.makedirs(model_save_path)
 
-    caption_model.save_weights(f"{model_save_path}/caption_model.weights.h5")
+    # Keras subclassed models with custom train_step may not be marked built for save_weights.
+    # Attempt to persist full caption-model weights, but don't fail the run if this path is unavailable.
+    try:
+        caption_model.save_weights(f"{model_save_path}/caption_model.weights.h5")
+    except ValueError as save_exc:
+        print(f"Warning: caption_model.save_weights skipped: {save_exc}")
+
     cnn_model.save(f"{model_save_path}/cnn_model")
     encoder.save(f"{model_save_path}/encoder")
     decoder.save(f"{model_save_path}/decoder")
@@ -355,7 +459,7 @@ for epochs in EPOCHS_PER_RUN:
     email_body += "You can now download the models from the cluster."
     
     subprocess.run([
-        "python", "send_email.py",
+        PYTHON_BIN, "send_email.py",
         "jacobgar@iastate.edu",
         email_subject,
         email_body
