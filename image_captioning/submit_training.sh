@@ -8,6 +8,8 @@
 #SBATCH --account=s2026.se.4390.01
 #SBATCH --partition=instruction
 #SBATCH --gres=gpu:1
+#SBATCH --mail-user=jacobgar@iastate.edu
+#SBATCH --mail-type=END,FAIL
 
 # Load any necessary modules
 module load python/3.10 2>/dev/null || true

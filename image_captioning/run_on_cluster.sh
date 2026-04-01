@@ -13,15 +13,12 @@ ssh "${REMOTE_USER}@${REMOTE_HOST}" exit
 echo "Uploading files to Nova cluster..."
 rsync -avz --exclude 'models' --exclude '__pycache__' --exclude 'venv' --exclude '.venv' --exclude 'training_log_*.out' --exclude 'logs' . "${REMOTE_USER}@${REMOTE_HOST}:~/image_captioning/"
 
-echo "Submitting job and waiting for it to finish..."
-echo "(This will block until the training is 100% complete. Do not close your laptop!)"
-ssh -o "ServerAliveInterval=60" "${REMOTE_USER}@${REMOTE_HOST}" << 'EOF'
-  cd ~/image_captioning
-  sbatch --wait submit_training.sh
-EOF
+echo "Submitting job to the cluster..."
+ssh -o "ServerAliveInterval=60" "${REMOTE_USER}@${REMOTE_HOST}" 'cd ~/image_captioning && sbatch submit_training.sh'
 
-echo "Training finished! Downloading models, logs, and TensorBoard data..."
-scp -r "${REMOTE_USER}@${REMOTE_HOST}:~/image_captioning/models" "/Users/jacobg/Projects/School/KerasDemo/image_captioning/"
-scp -r "${REMOTE_USER}@${REMOTE_HOST}:~/image_captioning/logs" "/Users/jacobg/Projects/School/KerasDemo/image_captioning/"
-
-echo "Success! The models and logs are now in your local folder."
+echo ""
+echo "Job submitted! You will receive an email when it is complete."
+echo "You can close this window. To check job status, SSH to the cluster and run 'squeue -u ${REMOTE_USER}'"
+echo "To download your models later, you can use a command like:"
+echo "scp -r ${REMOTE_USER}@${REMOTE_HOST}:~/image_captioning/models ."
+echo "scp -r ${REMOTE_USER}@${REMOTE_HOST}:~/image_captioning/logs ."

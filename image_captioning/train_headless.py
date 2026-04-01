@@ -1,4 +1,6 @@
 import os
+import subprocess
+import time
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -154,12 +156,12 @@ class ImageCaptioningModel(keras.Model):
         accuracy *= mask
         return tf.reduce_sum(accuracy) / tf.reduce_sum(mask)
 
-    def _compute_caption_loss_and_acc(self, img_embed, captions, cap_mask):
-        encoder_output = self.encoder(img_embed, training=True)
+    def _compute_caption_loss_and_acc(self, img_embed, captions, cap_mask, training):
+        encoder_output = self.encoder(img_embed, training=training)
         y_true = captions[:, 1:]
         mask = cap_mask[:, 1:]
         y_pred = self.decoder(
-            captions[:, :-1], encoder_output, training=True, mask=mask
+            captions[:, :-1], encoder_output, training=training, mask=mask
         )
         loss = self.calculate_loss(y_true, y_pred, mask)
         acc = self.calculate_accuracy(y_true, y_pred, mask)
@@ -169,28 +171,37 @@ class ImageCaptioningModel(keras.Model):
         batch_x, batch_y = batch_data
         cap_mask = tf.math.not_equal(batch_y, 0)
         img_embed = self.cnn_model(batch_x)
-        losses = 0
-        accs = 0
 
-        for i in range(self.num_captions_per_image):
-            with tf.GradientTape() as tape:
-                loss, acc = self._compute_caption_loss_and_acc(
-                    img_embed, batch_y[:, i, :], cap_mask[:, i, :]
-                )
+        # Process all captions at once
+        batch_y_reshaped = tf.reshape(batch_y, [-1, SEQ_LENGTH])
+        cap_mask_reshaped = tf.reshape(cap_mask, [-1, SEQ_LENGTH])
 
-            train_vars = (
-                self.encoder.trainable_variables + self.decoder.trainable_variables
+        # Repeat image embeddings for each caption
+        img_embed_repeated = tf.repeat(
+            img_embed, repeats=self.num_captions_per_image, axis=0
+        )
+
+        with tf.GradientTape() as tape:
+            loss, acc = self._compute_caption_loss_and_acc(
+                img_embed_repeated, batch_y_reshaped, cap_mask_reshaped, training=True
             )
-            grads = tape.gradient(loss, train_vars)
-            self.optimizer.apply_gradients(zip(grads, train_vars))
-            losses += loss
-            accs += acc
 
-        loss = losses / self.num_captions_per_image
-        acc = accs / self.num_captions_per_image
+        # Collect all trainable variables
+        train_vars = (
+            self.encoder.trainable_variables + self.decoder.trainable_variables
+        )
 
+        # Get the gradients
+        grads = tape.gradient(loss, train_vars)
+
+        # Apply the gradients
+        self.optimizer.apply_gradients(zip(grads, train_vars))
+
+        # Update the metrics
         self.loss_tracker.update_state(loss)
         self.acc_tracker.update_state(acc)
+
+        # Return the metrics
         return {
             "loss": self.loss_tracker.result(),
             "accuracy": self.acc_tracker.result(),
@@ -200,21 +211,25 @@ class ImageCaptioningModel(keras.Model):
         batch_x, batch_y = batch_data
         cap_mask = tf.math.not_equal(batch_y, 0)
         img_embed = self.cnn_model(batch_x)
-        losses = 0
-        accs = 0
 
-        for i in range(self.num_captions_per_image):
-            loss, acc = self._compute_caption_loss_and_acc(
-                img_embed, batch_y[:, i, :], cap_mask[:, i, :]
-            )
-            losses += loss
-            accs += acc
+        # Process all captions at once
+        batch_y_reshaped = tf.reshape(batch_y, [-1, SEQ_LENGTH])
+        cap_mask_reshaped = tf.reshape(cap_mask, [-1, SEQ_LENGTH])
 
-        loss = losses / self.num_captions_per_image
-        acc = accs / self.num_captions_per_image
+        # Repeat image embeddings for each caption
+        img_embed_repeated = tf.repeat(
+            img_embed, repeats=self.num_captions_per_image, axis=0
+        )
 
+        loss, acc = self._compute_caption_loss_and_acc(
+            img_embed_repeated, batch_y_reshaped, cap_mask_reshaped, training=False
+        )
+
+        # Update the metrics
         self.loss_tracker.update_state(loss)
         self.acc_tracker.update_state(acc)
+
+        # Return the metrics
         return {
             "loss": self.loss_tracker.result(),
             "accuracy": self.acc_tracker.result(),
@@ -223,6 +238,42 @@ class ImageCaptioningModel(keras.Model):
     @property
     def metrics(self):
         return [self.loss_tracker, self.acc_tracker]
+
+class HourlyProgressCallback(keras.callbacks.Callback):
+    def __init__(self, email_address, total_epochs):
+        super().__init__()
+        self.email_address = email_address
+        self.total_epochs = total_epochs
+        self.last_email_time = time.time()
+        self.epoch_start_time = None
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch == 0:
+            self.epoch_start_time = time.time()
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_time = time.time()
+        if (current_time - self.last_email_time) >= 3600:
+            # It's been an hour, send an email
+            self.last_email_time = current_time
+            
+            # Estimate completion time
+            if self.epoch_start_time is not None:
+                elapsed_time = current_time - self.epoch_start_time
+                avg_time_per_epoch = elapsed_time / (epoch + 1)
+                remaining_epochs = self.total_epochs - (epoch + 1)
+                estimated_remaining_time = avg_time_per_epoch * remaining_epochs
+                
+                email_subject = "Keras Training Hourly Update"
+                email_body = f"Epoch {epoch + 1}/{self.total_epochs} complete.\n\n"
+                email_body += f"Estimated time remaining: {estimated_remaining_time / 3600:.2f} hours.\n"
+                
+                subprocess.run([
+                    "python", "send_email.py",
+                    self.email_address,
+                    email_subject,
+                    email_body
+                ])
 
 for epochs in EPOCHS_PER_RUN:
     print(f"--- Training for {epochs} epochs ---")
@@ -273,11 +324,12 @@ for epochs in EPOCHS_PER_RUN:
     caption_model.compile(optimizer=keras.optimizers.Adam(lr_schedule), loss=cross_entropy)
 
     # Fit the model
+    hourly_callback = HourlyProgressCallback("jacobgar@iastate.edu", epochs)
     caption_model.fit(
         train_dataset,
         epochs=epochs,
         validation_data=valid_dataset,
-        callbacks=[early_stopping, tensorboard_callback],
+        callbacks=[early_stopping, tensorboard_callback, hourly_callback],
     )
 
     # Save the model
@@ -286,7 +338,7 @@ for epochs in EPOCHS_PER_RUN:
     if not os.path.exists(model_save_path):
         os.makedirs(model_save_path)
 
-    caption_model.save_weights(f"{model_save_path}/caption_model_weights.h5")
+    caption_model.save_weights(f"{model_save_path}/caption_model.weights.h5")
     cnn_model.save(f"{model_save_path}/cnn_model")
     encoder.save(f"{model_save_path}/encoder")
     decoder.save(f"{model_save_path}/decoder")
@@ -297,5 +349,16 @@ for epochs in EPOCHS_PER_RUN:
     text_vec_model.save(f"{model_save_path}/text_vectorization")
 
     print(f"--- Training and saving for {epochs} epochs complete ---")
+
+    email_subject = f"Keras Training Complete for {epochs} epochs"
+    email_body = f"The Keras image captioning model training for {epochs} epochs has successfully completed.\n\n"
+    email_body += "You can now download the models from the cluster."
+    
+    subprocess.run([
+        "python", "send_email.py",
+        "jacobgar@iastate.edu",
+        email_subject,
+        email_body
+    ])
 
 print("All training runs complete.")

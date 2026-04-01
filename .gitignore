@@ -159,3 +159,6 @@ outputs/
 # OS-specific
 .DS_Store
 sequence_to_sequence_addition/training_log*
+/Users/jacobg/Projects/School/KerasDemo/image_captioning/logs
+image_captioning/logs/training_log*
+image_captioning/logs/e10/train/events.out*
