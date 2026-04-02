@@ -10,7 +10,8 @@ import tensorflow as tf
 import keras
 from keras import layers
 import gymnasium as gym
-from gymnasium.wrappers import AtariPreprocessing, FrameStack
+from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
+import ale_py
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -54,9 +55,9 @@ num_actions = 4
 
 
 def make_env(render_mode=None):
-    env = gym.make("BreakoutNoFrameskip-v4", render_mode=render_mode)
+    env = gym.make("ALE/Breakout-v5", frameskip=1, render_mode=render_mode)
     env = AtariPreprocessing(env)
-    env = FrameStack(env, 4)
+    env = FrameStackObservation(env, 4)
     return env
 
 

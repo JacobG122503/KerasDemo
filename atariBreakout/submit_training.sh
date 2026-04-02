@@ -87,14 +87,16 @@ if ! nvidia-smi 2>/dev/null; then
 fi
 
 # Set up a virtual environment on the cluster if it doesn't exist
-if [ ! -d "cluster_venv" ]; then
-    echo "Setting up cluster Python environment (first run takes a few minutes)..."
-    python3 -m venv cluster_venv
-    source cluster_venv/bin/activate
+# Use a shared venv across projects to stay within home-dir quota
+SHARED_VENV="$HOME/shared_cluster_venv"
+if [ ! -d "$SHARED_VENV" ]; then
+    echo "Setting up shared cluster Python environment (first run takes a few minutes)..."
+    python3 -m venv "$SHARED_VENV"
+    source "$SHARED_VENV/bin/activate"
     pip install --upgrade pip setuptools wheel
     pip install --no-cache-dir -U -r requirements.txt
 else
-    source cluster_venv/bin/activate
+    source "$SHARED_VENV/bin/activate"
     pip install --no-cache-dir -U -r requirements.txt
 fi
 
@@ -134,10 +136,10 @@ export TF_CUDA_PATHS="${CUDA_HOME:-/usr/local/cuda}"
 export TF_CPP_MIN_LOG_LEVEL=0
 
 # Test GPU visibility
-TF_VISIBLE_GPU_COUNT=$(python3 -c 'import tensorflow as tf; print(len(tf.config.list_physical_devices("GPU")))')
+TF_VISIBLE_GPU_COUNT=$(python3 -c 'import tensorflow as tf; print(len(tf.config.list_physical_devices("GPU")))' 2>/dev/null || echo "0")
 echo "TensorFlow GPUs visible: ${TF_VISIBLE_GPU_COUNT}"
 
-if [ "${TF_VISIBLE_GPU_COUNT}" -lt 1 ]; then
+if [ "${TF_VISIBLE_GPU_COUNT:-0}" -lt 1 ] 2>/dev/null; then
     echo "WARNING: TensorFlow cannot see GPUs. Training will fall back to CPU."
 fi
 

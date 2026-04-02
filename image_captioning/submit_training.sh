@@ -116,16 +116,17 @@ if ! nvidia-smi 2>/dev/null; then
     exit 1
 fi
 
-# Set up a virtual environment on the cluster if it doesn't exist
-if [ ! -d "cluster_venv" ]; then
-    echo "Setting up cluster Python environment (first run takes a few minutes)..."
-    python3 -m venv cluster_venv
-    source cluster_venv/bin/activate
+# Use a shared venv across projects to stay within home-dir quota
+SHARED_VENV="$HOME/shared_cluster_venv"
+if [ ! -d "$SHARED_VENV" ]; then
+    echo "Setting up shared cluster Python environment (first run takes a few minutes)..."
+    python3 -m venv "$SHARED_VENV"
+    source "$SHARED_VENV/bin/activate"
     pip install --upgrade pip setuptools wheel
     # Use --no-cache-dir to save inodes (nvidia wheels are huge)
     pip install --no-cache-dir -U -r requirements.txt
 else
-    source cluster_venv/bin/activate
+    source "$SHARED_VENV/bin/activate"
     # Quick incremental update (already-installed packages are skipped fast)
     pip install --no-cache-dir -U -r requirements.txt
 fi

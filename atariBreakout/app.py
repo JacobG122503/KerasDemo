@@ -1,4 +1,6 @@
 import os
+import io
+import base64
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -6,8 +8,10 @@ import numpy as np
 import tensorflow as tf
 import keras
 from keras import layers
+from PIL import Image
 import gymnasium as gym
-from gymnasium.wrappers import AtariPreprocessing, FrameStack
+from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
+import ale_py
 import gradio as gr
 import time
 import threading
@@ -21,6 +25,12 @@ num_actions = 4
 
 APP_CSS = """
 footer { display: none !important; }
+.playback img {
+    width: 100%;
+    max-width: 960px;
+    border-radius: 12px;
+    image-rendering: pixelated;
+}
 """
 
 
@@ -30,10 +40,10 @@ footer { display: none !important; }
 def create_q_model():
     return keras.Sequential(
         [
+            layers.Input(shape=(4, 84, 84)),
             layers.Lambda(
                 lambda tensor: keras.ops.transpose(tensor, [0, 2, 3, 1]),
                 output_shape=(84, 84, 4),
-                input_shape=(4, 84, 84),
             ),
             layers.Conv2D(32, 8, strides=4, activation="relu"),
             layers.Conv2D(64, 4, strides=2, activation="relu"),
@@ -67,7 +77,8 @@ def load_model(model_name):
 
     model_path = os.path.join(MODELS_DIR, model_name)
     print(f"Loading model: {model_path}")
-    model = keras.models.load_model(model_path)
+    model = create_q_model()
+    model.load_weights(model_path)
     MODEL_CACHE[model_name] = model
     return model
 
@@ -86,9 +97,9 @@ def play_episode(model_name, max_steps=3000):
 
     model = load_model(model_name)
 
-    env = gym.make("BreakoutNoFrameskip-v4", render_mode="rgb_array")
+    env = gym.make("ALE/Breakout-v5", frameskip=1, render_mode="rgb_array")
     env = AtariPreprocessing(env)
-    env = FrameStack(env, 4)
+    env = FrameStackObservation(env, 4)
 
     observation, _ = env.reset()
     state = np.array(observation)
@@ -123,21 +134,53 @@ def play_episode(model_name, max_steps=3000):
     return frames, total_reward, f"Episode complete — Reward: {total_reward:.0f}, Steps: {step}"
 
 
+def build_playback_html(frames, fps=12, max_frames=240):
+    if not frames:
+        return "<p>No frames captured.</p>"
+
+    stride = max(1, len(frames) // max_frames)
+    sampled_frames = frames[::stride]
+    pil_frames = [Image.fromarray(frame) for frame in sampled_frames]
+
+    gif_buffer = io.BytesIO()
+    pil_frames[0].save(
+        gif_buffer,
+        format="GIF",
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=max(1, int(1000 / fps)),
+        loop=0,
+    )
+    gif_base64 = base64.b64encode(gif_buffer.getvalue()).decode("ascii")
+    return (
+        '<div class="playback">'
+        f'<img src="data:image/gif;base64,{gif_base64}" alt="Atari Breakout playback" />'
+        '</div>'
+    )
+
+
+def sample_preview_frames(frames, max_gallery=24):
+    if len(frames) <= max_gallery:
+        return frames
+
+    stride = max(1, len(frames) // max_gallery)
+    return frames[::stride][:max_gallery]
+
+
 def run_game(model_name):
     """Gradio callback: play one episode and return results."""
-    frames, reward, status = play_episode(model_name)
+    try:
+        frames, reward, status = play_episode(model_name)
+    except Exception as exc:
+        return None, None, f"Error while running episode: {type(exc).__name__}: {exc}"
+
     if frames is None or len(frames) == 0:
-        return None, status
+        return None, None, status
 
-    # Sample frames to create a reasonable gallery (every Nth frame)
-    max_gallery = 30
-    if len(frames) > max_gallery:
-        step = len(frames) // max_gallery
-        sampled = frames[::step][:max_gallery]
-    else:
-        sampled = frames
-
-    return sampled, status
+    playback_html = build_playback_html(frames)
+    preview_frames = sample_preview_frames(frames)
+    status = f"{status} | Captured frames: {len(frames)}"
+    return playback_html, preview_frames, status
 
 
 def refresh_models():
@@ -154,7 +197,7 @@ def build_app():
     available = get_available_models()
     default_model = available[0] if available else "(no models found)"
 
-    with gr.Blocks(css=APP_CSS, title="Atari Breakout DQN") as demo:
+    with gr.Blocks(title="Atari Breakout DQN") as demo:
         gr.Markdown("# Atari Breakout — Deep Q-Network Agent")
         gr.Markdown("Select a trained model and watch the agent play Breakout.")
 
@@ -170,14 +213,19 @@ def build_app():
         play_btn = gr.Button("Play Episode", variant="primary")
 
         status_text = gr.Textbox(label="Status", interactive=False)
-        gallery = gr.Gallery(label="Game Frames", columns=6, height="auto")
+        playback = gr.HTML(label="Playback")
+        gallery = gr.Gallery(label="Preview Frames", columns=6, height="auto")
 
         refresh_btn.click(fn=refresh_models, outputs=model_dropdown)
-        play_btn.click(fn=run_game, inputs=model_dropdown, outputs=[gallery, status_text])
+        play_btn.click(
+            fn=run_game,
+            inputs=model_dropdown,
+            outputs=[playback, gallery, status_text],
+        )
 
     return demo
 
 
 if __name__ == "__main__":
     demo = build_app()
-    demo.launch()
+    demo.launch(css=APP_CSS)
