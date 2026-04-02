@@ -3,13 +3,15 @@
 Generate MP4 videos of every trained DQN model playing Atari Breakout.
 
 Usage:
-    python play.py                        # render all models
-    python play.py --max-steps 5000       # override max episode length
-    python play.py --fps 30               # set video frame rate
+    python createVideos.py                 # render all models
+    python createVideos.py --max-steps 5000
+    python createVideos.py --fps 30
+    python createVideos.py --all-models    # include old checkpoints
 """
 import os
 import sys
 import argparse
+import re
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -73,6 +75,63 @@ def load_model(model_name):
     return model
 
 
+def select_models_to_render(models, render_all=False):
+    if render_all:
+        return models
+
+    selected = set()
+
+    # Keep primary artifacts when present.
+    for name in ("dqn_best.keras", "dqn_final.keras"):
+        if name in models:
+            selected.add(name)
+
+    # Keep only the latest checkpoint in each episodic family.
+    family_patterns = {
+        "episode": re.compile(r"^dqn_episode_(\d+)\.keras$"),
+        "early_stop": re.compile(r"^dqn_early_stop_ep(\d+)\.keras$"),
+        "solved": re.compile(r"^dqn_solved_ep(\d+)\.keras$"),
+        "max_ep": re.compile(r"^dqn_max_ep(\d+)\.keras$"),
+    }
+
+    latest_by_family = {key: (-1, None) for key in family_patterns}
+    for model_name in models:
+        for family, pattern in family_patterns.items():
+            match = pattern.match(model_name)
+            if not match:
+                continue
+            episode_num = int(match.group(1))
+            if episode_num > latest_by_family[family][0]:
+                latest_by_family[family] = (episode_num, model_name)
+
+    for _, model_name in latest_by_family.values():
+        if model_name is not None:
+            selected.add(model_name)
+
+    # Keep uncommon names that do not match known families.
+    for model_name in models:
+        if model_name in selected:
+            continue
+        if any(pattern.match(model_name) for pattern in family_patterns.values()):
+            continue
+        selected.add(model_name)
+
+    return sorted(selected)
+
+
+def model_to_video_name(model_name):
+    return model_name.replace(".keras", ".mp4")
+
+
+def remove_stale_videos(models):
+    expected = {model_to_video_name(model_name) for model_name in models}
+    for entry in os.listdir(MP4_DIR):
+        if entry.endswith(".mp4") and entry not in expected:
+            stale_path = os.path.join(MP4_DIR, entry)
+            os.remove(stale_path)
+            print(f"Removed stale video: {stale_path}")
+
+
 # ---------------------------------------------------------------------------
 # Run one full episode, returning every frame
 # ---------------------------------------------------------------------------
@@ -118,6 +177,10 @@ def save_mp4(frames, output_path, fps=30):
     h, w = frames[0].shape[:2]
     out_w, out_h = w * DISPLAY_SCALE, h * DISPLAY_SCALE
 
+    # Explicitly remove existing output so each run produces a fresh file.
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (out_w, out_h))
 
@@ -139,15 +202,29 @@ def main():
     )
     parser.add_argument("--max-steps", type=int, default=3000, help="Max steps per episode")
     parser.add_argument("--fps", type=int, default=30, help="Video frame rate")
+    parser.add_argument(
+        "--all-models",
+        action="store_true",
+        help="Render every .keras model (including old checkpoints)",
+    )
     args = parser.parse_args()
 
-    models = get_available_models()
-    if not models:
+    all_models = get_available_models()
+    if not all_models:
         print(f"No .keras models found in {MODELS_DIR}")
         sys.exit(1)
 
+    models = select_models_to_render(all_models, render_all=args.all_models)
+
     os.makedirs(MP4_DIR, exist_ok=True)
-    print(f"Found {len(models)} model(s). Videos will be saved to {MP4_DIR}/\n")
+    remove_stale_videos(models)
+    if args.all_models:
+        print(f"Found {len(models)} model(s) (all). Videos will be saved to {MP4_DIR}/\n")
+    else:
+        print(
+            f"Found {len(all_models)} model(s); rendering {len(models)} latest/useful model(s). "
+            f"Videos will be saved to {MP4_DIR}/\n"
+        )
 
     for i, model_name in enumerate(models, 1):
         print(f"[{i}/{len(models)}] {model_name}")
@@ -161,7 +238,7 @@ def main():
             print("  No frames captured, skipping.")
             continue
 
-        video_name = model_name.replace(".keras", ".mp4")
+        video_name = model_to_video_name(model_name)
         output_path = os.path.join(MP4_DIR, video_name)
         save_mp4(frames, output_path, fps=args.fps)
         print(f"  Saved → {output_path}\n")

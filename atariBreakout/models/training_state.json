@@ -1,8 +1,8 @@
 {
-  "episode": 101,
-  "frame_count": 18712,
-  "running_reward": 1.18,
-  "epsilon": 0.9831592000005545,
-  "best_reward": 3.0,
-  "timestamp": "2026-04-02 12:07:49"
+  "episode": 350,
+  "frame_count": 67389,
+  "running_reward": 1.31,
+  "epsilon": 0.9393499000019968,
+  "best_reward": 2.0,
+  "timestamp": "2026-04-02 14:05:53"
 }

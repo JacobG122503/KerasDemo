@@ -33,10 +33,12 @@ max_memory_length = 100000
 update_after_actions = 4
 update_target_network = 10000
 
-# Early-stopping: if the running reward drops for this many consecutive
-# evaluation windows we assume the model is regressing / overfitting and stop.
-EARLY_STOP_PATIENCE = 50  # episodes without improvement
-CHECKPOINT_EVERY_EPISODES = 50  # save a checkpoint every N episodes
+# Early stopping is disabled by default so training runs until solved.
+ENABLE_EARLY_STOP = False
+EARLY_STOP_PATIENCE = 200        # episodes without improvement
+EARLY_STOP_MIN_EPISODES = 500    # don't early-stop before this episode
+EARLY_STOP_MIN_REWARD = 5.0      # don't early-stop until reward exceeds this
+CHECKPOINT_EVERY_EPISODES = 50   # save a checkpoint every N episodes
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -249,15 +251,25 @@ def main():
                 f"Elapsed: {elapsed/3600:.1f}h"
             )
 
-        # Early stopping check
+        # Track best reward and save best model
         if running_reward > best_running_reward:
             best_running_reward = running_reward
             episodes_without_improvement = 0
-            save_model(model, "dqn_best.keras")
+            # Only save "best" once the agent is actually scoring
+            if running_reward >= 1.0:
+                save_model(model, "dqn_best.keras")
         else:
             episodes_without_improvement += 1
 
-        if episodes_without_improvement >= EARLY_STOP_PATIENCE and episode_count > 100:
+        # Early stopping: only after enough training AND the agent has
+        # reached a meaningful reward level, so we don't quit while
+        # the agent is still in the random-exploration phase.
+        if (
+            ENABLE_EARLY_STOP
+            and episodes_without_improvement >= EARLY_STOP_PATIENCE
+            and episode_count >= EARLY_STOP_MIN_EPISODES
+            and best_running_reward >= EARLY_STOP_MIN_REWARD
+        ):
             print(
                 f"Early stopping at episode {episode_count}. "
                 f"No improvement for {EARLY_STOP_PATIENCE} episodes. "
