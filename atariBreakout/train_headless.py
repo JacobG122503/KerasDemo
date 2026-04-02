@@ -15,6 +15,9 @@ import gymnasium as gym
 from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
 import ale_py
 
+# Checkpoints are locally produced by this project and include a Lambda layer.
+keras.config.enable_unsafe_deserialization()
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
