@@ -29,7 +29,7 @@ from model_definition import (
 IMAGES_PATH = "Flicker8k_Dataset"
 IMAGE_SIZE = (299, 299)
 BATCH_SIZE = 64
-EPOCHS_PER_RUN = [1,10,30,60,100] # Example: [20, 30, 40] or just [100]
+EPOCHS_PER_RUN = [1500,2000] # Example: [20, 30, 40] or just [100]
 AUTOTUNE = tf.data.AUTOTUNE
 ENABLE_DATASET_DISK_CACHE = True
 JOB_ID = os.environ.get("SLURM_JOB_ID", "local")
