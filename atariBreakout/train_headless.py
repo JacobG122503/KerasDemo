@@ -2,6 +2,8 @@ import os
 import sys
 import time
 import json
+import glob
+import argparse
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -104,6 +106,44 @@ def save_training_state(episode, frame_count, running_reward, epsilon_val, best_
         json.dump(state, f, indent=2)
 
 
+def load_checkpoint(model, model_target):
+    """Auto-detect and load the latest checkpoint. Returns saved state dict or None."""
+    state_path = os.path.join(MODELS_DIR, "training_state.json")
+    if not os.path.exists(state_path):
+        return None
+
+    with open(state_path) as f:
+        state = json.load(f)
+
+    # Prefer the latest episode checkpoint; fall back to dqn_best
+    episode_checkpoints = glob.glob(os.path.join(MODELS_DIR, "dqn_episode_*.keras"))
+    checkpoint_path = None
+    if episode_checkpoints:
+        def ep_num(p):
+            try:
+                return int(os.path.basename(p).replace("dqn_episode_", "").replace(".keras", ""))
+            except ValueError:
+                return -1
+        checkpoint_path = max(episode_checkpoints, key=ep_num)
+    else:
+        best_path = os.path.join(MODELS_DIR, "dqn_best.keras")
+        if os.path.exists(best_path):
+            checkpoint_path = best_path
+
+    if checkpoint_path is None:
+        print("training_state.json found but no model checkpoint — starting fresh.")
+        return None
+
+    print(f"[Resume] Loading checkpoint: {os.path.basename(checkpoint_path)}")
+    print(f"[Resume] Episode: {state['episode']}  Frames: {state['frame_count']}  "
+          f"Running reward: {state['running_reward']:.2f}  Epsilon: {state['epsilon']:.4f}")
+
+    loaded = keras.models.load_model(checkpoint_path, safe_mode=False)
+    model.set_weights(loaded.get_weights())
+    model_target.set_weights(loaded.get_weights())
+    return state
+
+
 # ---------------------------------------------------------------------------
 # Main training loop
 # ---------------------------------------------------------------------------
@@ -111,6 +151,11 @@ def main():
     print(f"Job ID: {JOB_ID}")
     print(f"TensorFlow version: {tf.__version__}")
     print(f"GPUs available: {tf.config.list_physical_devices('GPU')}")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-resume", action="store_true",
+                        help="Start training from scratch, ignoring any saved checkpoint")
+    args, _ = parser.parse_known_args()
 
     env = make_env()
 
@@ -136,6 +181,20 @@ def main():
 
     global epsilon
     eps = epsilon
+
+    # --- Resume from checkpoint if available ---
+    if not args.no_resume:
+        saved = load_checkpoint(model, model_target)
+        if saved:
+            episode_count = saved["episode"]
+            frame_count = saved["frame_count"]
+            running_reward = saved["running_reward"]
+            eps = max(saved["epsilon"], epsilon_min)
+            best_running_reward = saved["best_reward"]
+            # Seed episode_reward_history so the rolling mean starts correctly
+            episode_reward_history = [running_reward] * min(100, episode_count)
+    else:
+        print("[Resume] --no-resume flag set — starting fresh.")
 
     # TensorBoard writer
     tb_writer = tf.summary.create_file_writer(os.path.join(LOGS_DIR, JOB_ID))

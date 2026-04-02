@@ -164,3 +164,5 @@ image_captioning/logs/training_log*
 image_captioning/logs/e10/train/events.out*
 image_captioning/Flicker8k_Dataset
 atariBreakout/logs
+atariBreakout/models
+atariBreakout/Keeping
