@@ -1,33 +1,102 @@
 #!/bin/bash
 set -euo pipefail
 
+# squeue -u jacobgar
+# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10281909.out"
+
 # Upload code to HPC cluster, submit the SLURM job, and print status.
 
 REMOTE_USER="jacobgar"
 REMOTE_HOST="nova-login-1.its.iastate.edu"
 
+LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_UPLOAD_DIR="$(mktemp -d)"
+
+cleanup_tmp() {
+	rm -rf "$TMP_UPLOAD_DIR"
+}
+trap cleanup_tmp EXIT
+
+echo "Preparing minimal upload bundle (code + resume files)..."
+
+# Copy source tree without generated artifacts.
+(
+	cd "$LOCAL_DIR"
+	COPYFILE_DISABLE=1 tar -cf - \
+		--exclude='./models' \
+		--exclude='./__pycache__' \
+		--exclude='./venv' \
+		--exclude='./.venv' \
+		--exclude='./logs' \
+		--exclude='./mp4' \
+		--exclude='./mp4/*' \
+		--exclude='./Keeping' \
+		--exclude='./Keeping/*' \
+		--exclude='./.git' \
+		--exclude='./.git/*' \
+		--exclude='./.DS_Store' \
+		--exclude='*/.DS_Store' \
+		--exclude='./._*' \
+		--exclude='*/._*' \
+		--exclude='./cluster_venv' \
+		.
+) | (
+	cd "$TMP_UPLOAD_DIR"
+	tar -xf -
+)
+
+# Add bare-minimum resume artifacts from local models.
+mkdir -p "$TMP_UPLOAD_DIR/models"
+
+RESUME_STATE_SRC="$LOCAL_DIR/models/training_state.json"
+RESUME_MODEL_SRC=""
+
+if ls "$LOCAL_DIR"/models/dqn_episode_*.keras >/dev/null 2>&1; then
+	RESUME_MODEL_SRC=$(ls -1 "$LOCAL_DIR"/models/dqn_episode_*.keras \
+		| sed -E 's|.*dqn_episode_([0-9]+)\.keras|\1 &|' \
+		| sort -n \
+		| tail -n 1 \
+		| cut -d' ' -f2-)
+elif [ -f "$LOCAL_DIR/models/dqn_best.keras" ]; then
+	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_best.keras"
+elif [ -f "$LOCAL_DIR/models/dqn_final.keras" ]; then
+	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_final.keras"
+fi
+
+if [ -f "$RESUME_STATE_SRC" ] && [ -n "$RESUME_MODEL_SRC" ]; then
+	cp "$RESUME_STATE_SRC" "$TMP_UPLOAD_DIR/models/"
+	cp "$RESUME_MODEL_SRC" "$TMP_UPLOAD_DIR/models/"
+	echo "Including resume files:"
+	echo "  - $(basename "$RESUME_STATE_SRC")"
+	echo "  - $(basename "$RESUME_MODEL_SRC")"
+else
+	echo "No complete local resume set found (training_state.json + checkpoint)."
+	echo "Training will start fresh on the cluster."
+fi
+
 echo "Authenticating (you will only be prompted once)..."
 
 echo "Uploading + submitting in a single SSH session..."
-if ! tar -czf - \
-	--exclude='./models' \
-	--exclude='./__pycache__' \
-	--exclude='./venv' \
-	--exclude='./.venv' \
-	--exclude='./logs' \
-	--exclude='./cluster_venv' \
-	. | ssh -o ServerAliveInterval=60 "${REMOTE_USER}@${REMOTE_HOST}" '
+if ! (
+	cd "$TMP_UPLOAD_DIR"
+	COPYFILE_DISABLE=1 tar -czf - .
+) | ssh -o ServerAliveInterval=60 "${REMOTE_USER}@${REMOTE_HOST}" '
 set -euo pipefail
 
 cd ~
+
+echo "Clearing remote home directory (keeping only .ssh)..."
+# This only affects files on the cluster, never local files on your Mac.
+find "$HOME" -mindepth 1 -maxdepth 1 \
+	! -name .ssh \
+	-exec rm -rf -- {} +
+
 mkdir -p atariBreakout
 cd atariBreakout
 
 echo "Checking remote storage..."
 AVAIL_KB=$(df -Pk ~ 2>/dev/null | awk "NR==2 {print \$4}")
 echo "Home available space (KB): ${AVAIL_KB}"
-
-rm -rf __pycache__ 2>/dev/null || true
 
 mkdir -p logs models
 

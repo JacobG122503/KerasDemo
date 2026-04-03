@@ -12,6 +12,7 @@ import os
 import sys
 import argparse
 import re
+from typing import Dict, List, Optional, Tuple
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
 
@@ -86,45 +87,105 @@ def select_models_to_render(models, render_all=False):
         if name in models:
             selected.add(name)
 
-    # Keep only the latest checkpoint in each episodic family.
-    family_patterns = {
-        "episode": re.compile(r"^dqn_episode_(\d+)\.keras$"),
-        "early_stop": re.compile(r"^dqn_early_stop_ep(\d+)\.keras$"),
-        "solved": re.compile(r"^dqn_solved_ep(\d+)\.keras$"),
-        "max_ep": re.compile(r"^dqn_max_ep(\d+)\.keras$"),
-    }
-
-    latest_by_family = {key: (-1, None) for key in family_patterns}
+    # Keep exactly 5 spread-out episode checkpoints, based on max episode.
+    episode_pattern = re.compile(r"^dqn_episode_(\d+)\.keras$")
+    episode_models = []
     for model_name in models:
-        for family, pattern in family_patterns.items():
-            match = pattern.match(model_name)
-            if not match:
-                continue
-            episode_num = int(match.group(1))
-            if episode_num > latest_by_family[family][0]:
-                latest_by_family[family] = (episode_num, model_name)
+        match = episode_pattern.match(model_name)
+        if match:
+            episode_models.append((int(match.group(1)), model_name))
 
-    for _, model_name in latest_by_family.values():
-        if model_name is not None:
-            selected.add(model_name)
+    if episode_models:
+        episode_models.sort(key=lambda x: x[0])
+        max_episode = episode_models[-1][0]
+        target_count = min(5, len(episode_models))
+        targets = [max_episode * i / 5 for i in range(1, 6)]
 
-    # Keep uncommon names that do not match known families.
-    for model_name in models:
-        if model_name in selected:
-            continue
-        if any(pattern.match(model_name) for pattern in family_patterns.values()):
-            continue
-        selected.add(model_name)
+        chosen_episode_names = set()
+        for target in targets:
+            closest = min(
+                episode_models,
+                key=lambda item: (abs(item[0] - target), -item[0]),
+            )
+            chosen_episode_names.add(closest[1])
+            if len(chosen_episode_names) >= target_count:
+                break
+
+        # If sparse checkpoints caused duplicates, fill with newest remaining.
+        if len(chosen_episode_names) < target_count:
+            for _, model_name in sorted(episode_models, key=lambda x: x[0], reverse=True):
+                chosen_episode_names.add(model_name)
+                if len(chosen_episode_names) >= target_count:
+                    break
+
+        selected.update(chosen_episode_names)
 
     return sorted(selected)
 
 
-def model_to_video_name(model_name):
-    return model_name.replace(".keras", ".mp4")
+def _episode_from_name(model_name: str) -> Optional[int]:
+    patterns = [
+        re.compile(r"^dqn_episode_(\d+)\.keras$"),
+        re.compile(r"^dqn_early_stop_ep(\d+)\.keras$"),
+        re.compile(r"^dqn_solved_ep(\d+)\.keras$"),
+        re.compile(r"^dqn_max_ep(\d+)\.keras$"),
+    ]
+    for pattern in patterns:
+        match = pattern.match(model_name)
+        if match:
+            return int(match.group(1))
+    return None
 
 
-def remove_stale_videos(models):
-    expected = {model_to_video_name(model_name) for model_name in models}
+def build_model_episode_map(models: List[str]) -> Dict[str, Optional[int]]:
+    """
+    Estimate episode numbers for models that do not encode episode in filename.
+
+    For dqn_best/dqn_final, use nearest prior dqn_episode_<N>.keras by mtime.
+    """
+    mapping: Dict[str, Optional[int]] = {name: _episode_from_name(name) for name in models}
+
+    episode_candidates: List[Tuple[float, int]] = []
+    for name in models:
+        ep = _episode_from_name(name)
+        if ep is None:
+            continue
+        if not name.startswith("dqn_episode_"):
+            continue
+        path = os.path.join(MODELS_DIR, name)
+        if os.path.exists(path):
+            episode_candidates.append((os.path.getmtime(path), ep))
+
+    episode_candidates.sort(key=lambda x: x[0])
+    if not episode_candidates:
+        return mapping
+
+    for special_name in ("dqn_best.keras", "dqn_final.keras"):
+        if special_name not in mapping:
+            continue
+        special_path = os.path.join(MODELS_DIR, special_name)
+        if not os.path.exists(special_path):
+            continue
+        special_mtime = os.path.getmtime(special_path)
+
+        eligible = [ep for ts, ep in episode_candidates if ts <= special_mtime + 1e-6]
+        if eligible:
+            mapping[special_name] = max(eligible)
+
+    return mapping
+
+
+def model_to_video_name(model_name, episode_num=None):
+    stem = model_name.replace(".keras", "")
+    if model_name == "dqn_best.keras" and episode_num is not None:
+        return f"dqn_best_ep{episode_num}.mp4"
+    if model_name == "dqn_final.keras" and episode_num is not None:
+        return f"dqn_final_ep{episode_num}.mp4"
+    return f"{stem}.mp4"
+
+
+def remove_stale_videos(models, episode_map):
+    expected = {model_to_video_name(model_name, episode_map.get(model_name)) for model_name in models}
     for entry in os.listdir(MP4_DIR):
         if entry.endswith(".mp4") and entry not in expected:
             stale_path = os.path.join(MP4_DIR, entry)
@@ -215,19 +276,24 @@ def main():
         sys.exit(1)
 
     models = select_models_to_render(all_models, render_all=args.all_models)
+    episode_map = build_model_episode_map(models)
 
     os.makedirs(MP4_DIR, exist_ok=True)
-    remove_stale_videos(models)
+    remove_stale_videos(models, episode_map)
     if args.all_models:
         print(f"Found {len(models)} model(s) (all). Videos will be saved to {MP4_DIR}/\n")
     else:
         print(
-            f"Found {len(all_models)} model(s); rendering {len(models)} latest/useful model(s). "
+            f"Found {len(all_models)} model(s); rendering {len(models)} selected model(s). "
             f"Videos will be saved to {MP4_DIR}/\n"
         )
 
     for i, model_name in enumerate(models, 1):
-        print(f"[{i}/{len(models)}] {model_name}")
+        episode_num = episode_map.get(model_name)
+        if episode_num is not None:
+            print(f"[{i}/{len(models)}] {model_name} (episode ~{episode_num})")
+        else:
+            print(f"[{i}/{len(models)}] {model_name}")
         model = load_model(model_name)
 
         print(f"  Running episode (max {args.max_steps} steps)...")
@@ -238,7 +304,7 @@ def main():
             print("  No frames captured, skipping.")
             continue
 
-        video_name = model_to_video_name(model_name)
+        video_name = model_to_video_name(model_name, episode_num)
         output_path = os.path.join(MP4_DIR, video_name)
         save_mp4(frames, output_path, fps=args.fps)
         print(f"  Saved → {output_path}\n")
