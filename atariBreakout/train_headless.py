@@ -362,7 +362,7 @@ def main():
             break
 
         # Solved condition
-        if running_reward > 40:
+        if running_reward > 400:
             print(f"Solved at episode {episode_count}!")
             save_model(model, f"dqn_solved_ep{episode_count}.keras")
             break

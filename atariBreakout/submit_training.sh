@@ -10,6 +10,7 @@
 #SBATCH --partition=instruction
 #SBATCH --mail-user=jacobgar@iastate.edu
 #SBATCH --mail-type=END,FAIL
+#SBATCH --signal=B:USR1@300
 
 EMAIL_TO="jacobgar@iastate.edu"
 LOG_FILE="logs/training_log_${SLURM_JOB_ID:-unknown}.out"
@@ -145,15 +146,43 @@ fi
 
 mkdir -p logs models
 
+# Resubmit this job to continue training (resume is automatic via checkpoint).
+resubmit() {
+    echo "Resubmitting job to continue training..."
+    cd "$(dirname "$0")"
+    sbatch submit_training.sh && echo "Resubmit succeeded." || echo "Resubmit failed."
+}
+
+# SLURM sends SIGUSR1 5 minutes before the wall-time limit (--signal=B:USR1@300).
+# Kill the Python process gracefully so it saves its checkpoint, then resubmit.
+handle_timeout() {
+    echo "Wall-time limit approaching — saving checkpoint and resubmitting..."
+    kill -SIGTERM "$TRAIN_PID" 2>/dev/null || true
+    wait "$TRAIN_PID" 2>/dev/null || true
+    resubmit
+    exit 0
+}
+trap 'handle_timeout' USR1
+
 echo "Starting Atari Breakout DQN Training..."
 set +e
-python3 -u train_headless.py "$@"
+python3 -u train_headless.py "$@" &
+TRAIN_PID=$!
+wait "$TRAIN_PID"
 TRAIN_EXIT_CODE=$?
 set -e
 
-if [ "${TRAIN_EXIT_CODE}" -ne 0 ]; then
+if [ "${TRAIN_EXIT_CODE}" -ne 0 ] && [ "${TRAIN_EXIT_CODE}" -ne 143 ]; then
     echo "ERROR: train_headless.py exited with code ${TRAIN_EXIT_CODE}"
     exit ${TRAIN_EXIT_CODE}
+fi
+
+# If training ended naturally without solving, resubmit to keep going.
+if grep -qE "Solved at episode" "${LOG_FILE}" 2>/dev/null; then
+    echo "Training solved — not resubmitting."
+else
+    echo "Training ended without solving — resubmitting to continue."
+    resubmit
 fi
 
 echo "Training script completed successfully."

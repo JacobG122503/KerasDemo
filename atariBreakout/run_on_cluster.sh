@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # squeue -u jacobgar
-# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10285292.out"
+# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10285409.out"
+# ssh jacobgar@nova-login-1.its.iastate.edu "scancel 10285305"
 
 # Upload code to HPC cluster, submit the SLURM job, and print status.
 # Pass --no-resume to start training from scratch (ignores saved checkpoints).
