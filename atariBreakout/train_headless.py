@@ -34,7 +34,7 @@ max_episodes = 0  # 0 = run until solved
 # Replay / update cadence
 epsilon_random_frames = 50000
 epsilon_greedy_frames = 1000000.0
-max_memory_length = 100000
+max_memory_length = 500000
 update_after_actions = 4
 update_target_network = 10000
 
@@ -205,9 +205,17 @@ def main():
     start_time = time.time()
 
     while True:
-        observation, _ = env.reset()
+        observation, info = env.reset()
         state = np.array(observation)
         episode_reward = 0
+        lives = info.get("lives", None)
+
+        # Press FIRE to launch the ball at the start of every episode.
+        # Without this the ball sits idle and floods the replay buffer with
+        # useless (state, NOOP, 0, same_state) transitions.
+        fire_next, _, _, _, info = env.step(1)
+        state = np.array(fire_next)
+        lives = info.get("lives", lives)
 
         for timestep in range(1, max_steps_per_episode):
             frame_count += 1
@@ -226,15 +234,28 @@ def main():
             eps = max(eps, epsilon_min)
 
             # Step environment
-            state_next, reward, done, _, _ = env.step(action)
+            state_next, reward, done, _, info = env.step(action)
             state_next = np.array(state_next)
+
+            # Life-loss handling: treat as terminal for Q-learning (so the
+            # value function doesn't bootstrap across a death), then press
+            # FIRE so the ball re-launches immediately instead of stalling.
+            new_lives = info.get("lives", lives)
+            life_lost = lives is not None and new_lives < lives
+            if life_lost:
+                fire_next, fire_reward, done, _, info = env.step(1)
+                state_next = np.array(fire_next)
+                reward += fire_reward
+            lives = info.get("lives", new_lives)
+
             episode_reward += reward
 
-            # Store in replay buffer
+            # Store in replay buffer — mark life-loss as terminal so the
+            # target Q-value is not bootstrapped past the death.
             action_history.append(action)
             state_history.append(state)
             state_next_history.append(state_next)
-            done_history.append(done)
+            done_history.append(done or life_lost)
             rewards_history.append(reward)
             state = state_next
 

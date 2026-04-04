@@ -2,9 +2,17 @@
 set -euo pipefail
 
 # squeue -u jacobgar
-# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10281909.out"
+# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10285292.out"
 
 # Upload code to HPC cluster, submit the SLURM job, and print status.
+# Pass --no-resume to start training from scratch (ignores saved checkpoints).
+
+NO_RESUME=false
+for arg in "$@"; do
+    if [ "$arg" = "--no-resume" ]; then
+        NO_RESUME=true
+    fi
+done
 
 REMOTE_USER="jacobgar"
 REMOTE_HOST="nova-login-1.its.iastate.edu"
@@ -63,7 +71,9 @@ elif [ -f "$LOCAL_DIR/models/dqn_final.keras" ]; then
 	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_final.keras"
 fi
 
-if [ -f "$RESUME_STATE_SRC" ] && [ -n "$RESUME_MODEL_SRC" ]; then
+if [ "$NO_RESUME" = true ]; then
+	echo "--no-resume flag set: skipping checkpoint upload. Training will start fresh."
+elif [ -f "$RESUME_STATE_SRC" ] && [ -n "$RESUME_MODEL_SRC" ]; then
 	cp "$RESUME_STATE_SRC" "$TMP_UPLOAD_DIR/models/"
 	cp "$RESUME_MODEL_SRC" "$TMP_UPLOAD_DIR/models/"
 	echo "Including resume files:"
@@ -72,6 +82,11 @@ if [ -f "$RESUME_STATE_SRC" ] && [ -n "$RESUME_MODEL_SRC" ]; then
 else
 	echo "No complete local resume set found (training_state.json + checkpoint)."
 	echo "Training will start fresh on the cluster."
+fi
+
+EXTRA_ARGS=""
+if [ "$NO_RESUME" = true ]; then
+	EXTRA_ARGS="--no-resume"
 fi
 
 echo "Authenticating (you will only be prompted once)..."
@@ -118,12 +133,14 @@ fi
 
 echo "GPU candidates on partition: $(echo "$GPU_CANDIDATES" | tr "\n" " " | sed "s/ $//")"
 
+'"EXTRA_ARGS=\"${EXTRA_ARGS}\""'
+
 for GPU_COUNT in $(echo "$GPU_CANDIDATES" | sort -nr); do
 	if [ "$GPU_COUNT" -lt 1 ]; then
 		continue
 	fi
 	echo "Trying submission with ${GPU_COUNT} GPU(s)..."
-	if SUBMIT_OUTPUT=$(sbatch --gres=gpu:${GPU_COUNT} submit_training.sh 2>&1); then
+	if SUBMIT_OUTPUT=$(sbatch --gres=gpu:${GPU_COUNT} submit_training.sh ${EXTRA_ARGS} 2>&1); then
 		echo "$SUBMIT_OUTPUT"
 		echo "Selected GPU count: ${GPU_COUNT}"
 		exit 0

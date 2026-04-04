@@ -201,8 +201,14 @@ def run_episode(model, max_steps=3000):
     env = AtariPreprocessing(env)
     env = FrameStackObservation(env, 4)
 
-    observation, _ = env.reset()
+    observation, info = env.reset()
     state = np.array(observation)
+    lives = info.get("lives", None)
+
+    # Press FIRE immediately to launch the ball at episode start.
+    fire_next, _, _, _, info = env.step(1)
+    state = np.array(fire_next)
+    lives = info.get("lives", lives)
 
     frames = []
     total_reward = 0.0
@@ -217,8 +223,18 @@ def run_episode(model, max_steps=3000):
         q_values = model(state_tensor, training=False)
         action = keras.ops.argmax(q_values[0]).numpy()
 
-        state_next, reward, done, _, _ = env.step(action)
-        state = np.array(state_next)
+        state_next, reward, done, _, info = env.step(action)
+        state_next = np.array(state_next)
+
+        new_lives = info.get("lives", lives)
+        if lives is not None and new_lives < lives:
+            # Life lost — press FIRE to serve the ball instead of stalling
+            state_next, fire_reward, done, _, info = env.step(1)
+            state_next = np.array(state_next)
+            reward += fire_reward
+        lives = new_lives
+
+        state = state_next
         total_reward += reward
 
         if done:

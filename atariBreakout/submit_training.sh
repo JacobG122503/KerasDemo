@@ -147,7 +147,7 @@ mkdir -p logs models
 
 echo "Starting Atari Breakout DQN Training..."
 set +e
-python3 -u train_headless.py
+python3 -u train_headless.py "$@"
 TRAIN_EXIT_CODE=$?
 set -e
 

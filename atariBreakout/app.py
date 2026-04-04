@@ -101,8 +101,9 @@ def play_episode(model_name, max_steps=3000):
     env = AtariPreprocessing(env)
     env = FrameStackObservation(env, 4)
 
-    observation, _ = env.reset()
+    observation, info = env.reset()
     state = np.array(observation)
+    lives = info.get("lives", None)
 
     frames = []
     total_reward = 0
@@ -114,14 +115,24 @@ def play_episode(model_name, max_steps=3000):
         if raw_frame is not None:
             frames.append(raw_frame)
 
-        # Model selects action (greedy, no exploration)
+        # After a life is lost the ball sits idle waiting for FIRE (action 1).
+        # Detect the life-loss by comparing the previous life count and force
+        # FIRE so the model doesn't stall doing nothing for thousands of steps.
         state_tensor = keras.ops.convert_to_tensor(state)
         state_tensor = keras.ops.expand_dims(state_tensor, 0)
         q_values = model(state_tensor, training=False)
         action = keras.ops.argmax(q_values[0]).numpy()
 
-        state_next, reward, done, _, _ = env.step(action)
+        state_next, reward, done, _, info = env.step(action)
         state_next = np.array(state_next)
+
+        new_lives = info.get("lives", lives)
+        if lives is not None and new_lives < lives:
+            # Life lost — press FIRE to serve the ball immediately
+            state_next, fire_reward, done, _, info = env.step(1)
+            state_next = np.array(state_next)
+            reward += fire_reward
+        lives = new_lives
 
         total_reward += reward
         state = state_next
