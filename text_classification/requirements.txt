@@ -1,0 +1,7 @@
+tensorflow
+keras-hub
+keras
+numpy
+gradio
+tokenizers
+sentencepiece

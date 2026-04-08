@@ -186,6 +186,7 @@ def model_to_video_name(model_name, episode_num=None):
 
 def remove_stale_videos(models, episode_map):
     expected = {model_to_video_name(model_name, episode_map.get(model_name)) for model_name in models}
+    expected.add("dqn_episode_0.mp4")  # always keep the untrained baseline
     for entry in os.listdir(MP4_DIR):
         if entry.endswith(".mp4") and entry not in expected:
             stale_path = os.path.join(MP4_DIR, entry)
@@ -296,6 +297,22 @@ def main():
 
     os.makedirs(MP4_DIR, exist_ok=True)
     remove_stale_videos(models, episode_map)
+
+    # Always render episode 0 (untrained baseline) if not already present.
+    ep0_path = os.path.join(MP4_DIR, "dqn_episode_0.mp4")
+    if not os.path.exists(ep0_path):
+        print("[0/?] dqn_episode_0 (untrained baseline)")
+        ep0_model = create_q_model()
+        print(f"  Running episode (max {args.max_steps} steps)...")
+        ep0_frames, ep0_reward, ep0_steps = run_episode(ep0_model, max_steps=args.max_steps)
+        print(f"  Episode done — Reward: {ep0_reward:.0f}, Steps: {ep0_steps}, Frames: {len(ep0_frames)}")
+        if ep0_frames:
+            save_mp4(ep0_frames, ep0_path, fps=args.fps)
+            print(f"  Saved → {ep0_path}\n")
+        else:
+            print("  No frames captured, skipping.\n")
+    else:
+        print("[0/?] dqn_episode_0.mp4 already exists, skipping.\n")
     if args.all_models:
         print(f"Found {len(models)} model(s) (all). Videos will be saved to {MP4_DIR}/\n")
     else:

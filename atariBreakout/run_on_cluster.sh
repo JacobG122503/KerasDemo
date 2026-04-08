@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # squeue -u jacobgar
-# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10285409.out"
-# ssh jacobgar@nova-login-1.its.iastate.edu "scancel 10285305"
+# ssh jacobgar@nova-login-1.its.iastate.edu "tail -f ~/atariBreakout/logs/training_log_10328990.out"
+# ssh jacobgar@nova-login-1.its.iastate.edu "scancel 10317945"
 
 # Upload code to HPC cluster, submit the SLURM job, and print status.
 # Pass --no-resume to start training from scratch (ignores saved checkpoints).
@@ -60,14 +60,15 @@ mkdir -p "$TMP_UPLOAD_DIR/models"
 RESUME_STATE_SRC="$LOCAL_DIR/models/training_state.json"
 RESUME_MODEL_SRC=""
 
-if ls "$LOCAL_DIR"/models/dqn_episode_*.keras >/dev/null 2>&1; then
+# Always upload the best model — train_headless.py resumes from dqn_best.keras
+if [ -f "$LOCAL_DIR/models/dqn_best.keras" ]; then
+	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_best.keras"
+elif ls "$LOCAL_DIR"/models/dqn_episode_*.keras >/dev/null 2>&1; then
 	RESUME_MODEL_SRC=$(ls -1 "$LOCAL_DIR"/models/dqn_episode_*.keras \
 		| sed -E 's|.*dqn_episode_([0-9]+)\.keras|\1 &|' \
 		| sort -n \
 		| tail -n 1 \
 		| cut -d' ' -f2-)
-elif [ -f "$LOCAL_DIR/models/dqn_best.keras" ]; then
-	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_best.keras"
 elif [ -f "$LOCAL_DIR/models/dqn_final.keras" ]; then
 	RESUME_MODEL_SRC="$LOCAL_DIR/models/dqn_final.keras"
 fi
@@ -76,10 +77,11 @@ if [ "$NO_RESUME" = true ]; then
 	echo "--no-resume flag set: skipping checkpoint upload. Training will start fresh."
 elif [ -f "$RESUME_STATE_SRC" ] && [ -n "$RESUME_MODEL_SRC" ]; then
 	cp "$RESUME_STATE_SRC" "$TMP_UPLOAD_DIR/models/"
-	cp "$RESUME_MODEL_SRC" "$TMP_UPLOAD_DIR/models/"
+	# Always upload as dqn_best.keras so load_checkpoint finds it immediately
+	cp "$RESUME_MODEL_SRC" "$TMP_UPLOAD_DIR/models/dqn_best.keras"
 	echo "Including resume files:"
 	echo "  - $(basename "$RESUME_STATE_SRC")"
-	echo "  - $(basename "$RESUME_MODEL_SRC")"
+	echo "  - $(basename "$RESUME_MODEL_SRC") -> dqn_best.keras"
 else
 	echo "No complete local resume set found (training_state.json + checkpoint)."
 	echo "Training will start fresh on the cluster."

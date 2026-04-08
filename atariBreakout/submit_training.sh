@@ -2,8 +2,9 @@
 #SBATCH --job-name=keras_breakout
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=8
-#SBATCH --mem=32G
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=20
+#SBATCH --mem=48G
 #SBATCH --gres=gpu:1
 #SBATCH --output=logs/training_log_%j.out
 #SBATCH --account=s2026.se.4390.01
