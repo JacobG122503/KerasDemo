@@ -87,10 +87,8 @@ run_epochs() {
     scp "${REMOTE_USER}@${REMOTE_HOST}:~/multimodal_entailment/models/multimodal_entailment_${epochs}_epochs.keras" "$LOCAL_DIR/models/" || echo "Failed to download model!"
 }
 
-# Run the training steps sequentially and save them to the computer after each step
-run_epochs 5
+# Run the training step once for 10 epochs and save it to the computer
 run_epochs 10
-run_epochs 15
 
 echo ""
-echo "All interactive training steps completed! Models are safely saved on your local computer."
+echo "Interactive training completed! Model is safely saved on your local computer."
