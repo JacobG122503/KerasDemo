@@ -22,7 +22,7 @@ pip install -r requirements.txt
 echo "========================================="
 echo "Starting local training (10 epochs)"
 echo "========================================="
-python3 train.py --epochs 10
+python3 train.py --epochs 1
 
 # Run for 20 epochs
 echo "========================================="
