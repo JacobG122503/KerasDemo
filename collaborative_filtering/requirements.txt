@@ -1,0 +1,9 @@
+keras>=3.0.0
+keras-hub
+tensorflow
+tensorflow-datasets
+pandas
+numpy
+matplotlib
+jax
+jaxlib
