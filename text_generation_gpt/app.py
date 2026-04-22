@@ -1,6 +1,7 @@
 import os
 import argparse
 import glob
+import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
@@ -161,7 +162,20 @@ class TextGenApp:
             
         sampler = keras_hub.samplers.TopKSampler(k=10)
         output_tokens = sampler(next=next_token, prompt=prompt_tokens, index=1)
-        txt = self.tokenizer.detokenize(output_tokens).numpy()[0].decode('utf-8')
+        
+        txt_output = self.tokenizer.detokenize(output_tokens)
+        if hasattr(txt_output, "numpy"):
+            txt_output = txt_output.numpy()
+            
+        if isinstance(txt_output, (list, tuple, np.ndarray)) and len(txt_output) > 0:
+            txt = txt_output[0]
+        else:
+            txt = txt_output
+            
+        if isinstance(txt, bytes):
+            txt = txt.decode('utf-8', errors='ignore')
+        else:
+            txt = str(txt)
         
         self.output_text.delete("1.0", tk.END)
         self.output_text.insert(tk.END, txt)

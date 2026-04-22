@@ -169,3 +169,4 @@ atariBreakout/Keeping
 text_classification/aclImdb
 text_classification/aclImdb_v1.tar.gz
 text_classification/models/vocab.txt
+text_generation_gpt/models/vocab.txt
