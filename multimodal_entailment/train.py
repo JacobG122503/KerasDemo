@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description="Multimodal Entailment Training")
 parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to train")
 args = parser.parse_args()
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 import keras
 import keras_hub
 from keras.utils import PyDataset

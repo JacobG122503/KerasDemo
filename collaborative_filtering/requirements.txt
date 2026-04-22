@@ -5,5 +5,3 @@ tensorflow-datasets
 pandas
 numpy
 matplotlib
-jax
-jaxlib

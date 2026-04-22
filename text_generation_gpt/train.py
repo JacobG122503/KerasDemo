@@ -1,7 +1,7 @@
 import os
 import argparse
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 
 import keras
 import keras_hub

@@ -10,7 +10,7 @@ from PIL import Image, ImageTk
 from skimage.io import imread
 from skimage.transform import resize
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 import keras
 import keras_hub
 

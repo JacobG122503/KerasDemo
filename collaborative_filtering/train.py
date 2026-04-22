@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from zipfile import ZipFile
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 import keras
 from keras import layers
 from keras import ops

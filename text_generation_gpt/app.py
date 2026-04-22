@@ -4,7 +4,7 @@ import glob
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 import keras
 import keras_hub
 import tensorflow.data as tf_data
