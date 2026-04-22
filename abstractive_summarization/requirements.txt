@@ -3,3 +3,4 @@ keras-hub
 tensorflow
 tensorflow-datasets
 py7zr
+importlib-resources

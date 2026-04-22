@@ -28,7 +28,7 @@ print(f"--- Starting training for {EPOCHS} epochs ---")
 print("Downloading and extracting SAMSum dataset...")
 filename = keras.utils.get_file(
     "corpus.7z",
-    origin="https://huggingface.co/datasets/samsum/resolve/main/data/corpus.7z",
+    origin="https://arxiv.org/src/1911.12237v2/anc/corpus.7z",
 )
 
 extract_path = os.path.expanduser("~/tensorflow_datasets/downloads/manual")
