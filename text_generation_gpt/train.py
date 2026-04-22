@@ -23,22 +23,22 @@ NUM_LAYERS = 2
 VOCAB_SIZE = 5000
 
 print("Downloading dataset...")
-keras.utils.get_file(
+extracted_path = keras.utils.get_file(
     origin="https://dldata-public.s3.us-east-2.amazonaws.com/simplebooks.zip",
     extract=True,
 )
-path = os.path.expanduser("~/.keras/datasets/simplebooks/")
+path = os.path.join(extracted_path, "simplebooks", "simplebooks-92-raw")
 
 print("Loading dataset...")
 raw_train_ds = (
-    tf_data.TextLineDataset(path + "simplebooks-92-raw/train.txt")
+    tf_data.TextLineDataset(os.path.join(path, "train.txt"))
     .filter(lambda x: tf_strings.length(x) > MIN_STRING_LEN)
     .batch(BATCH_SIZE)
     .shuffle(buffer_size=256)
 )
 
 raw_val_ds = (
-    tf_data.TextLineDataset(path + "simplebooks-92-raw/valid.txt")
+    tf_data.TextLineDataset(os.path.join(path, "valid.txt"))
     .filter(lambda x: tf_strings.length(x) > MIN_STRING_LEN)
     .batch(BATCH_SIZE)
 )

@@ -88,13 +88,13 @@ class TextGenApp:
             self.status_var.set("Loading SimpleBooks Dataset to reconstruct Vocabulary...")
             self.root.update()
             
-            keras.utils.get_file(
+            extracted_path = keras.utils.get_file(
                 origin="https://dldata-public.s3.us-east-2.amazonaws.com/simplebooks.zip",
                 extract=True,
             )
-            path_ds = os.path.expanduser("~/.keras/datasets/simplebooks/")
+            path_ds = os.path.join(extracted_path, "simplebooks", "simplebooks-92-raw")
             raw_train_ds = (
-                tf_data.TextLineDataset(path_ds + "simplebooks-92-raw/train.txt")
+                tf_data.TextLineDataset(os.path.join(path_ds, "train.txt"))
                 .filter(lambda x: tf_strings.length(x) > 512)
                 .batch(64)
             )
