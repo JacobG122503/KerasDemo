@@ -9,4 +9,4 @@ scikit-learn
 scikit-image
 Pillow
 jax
-jaxlib
+jaxlib[cuda12]

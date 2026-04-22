@@ -3,4 +3,4 @@ keras-hub
 tensorflow
 tensorflow-datasets
 jax
-jaxlib
+jaxlib[cuda12]
