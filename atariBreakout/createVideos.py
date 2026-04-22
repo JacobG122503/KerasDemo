@@ -18,7 +18,6 @@ os.environ["KERAS_BACKEND"] = "tensorflow"
 
 import numpy as np
 import cv2
-import tensorflow as tf
 import keras
 from keras import layers
 import gymnasium as gym
