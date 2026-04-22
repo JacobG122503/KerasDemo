@@ -131,11 +131,14 @@ class EntailmentApp:
             
             self.status_var.set("Downloading/Loading Dataset (Tweets & Images)...")
             self.root.update()
-            self.image_base_path = keras.utils.get_file(
+            
+            image_base_path = keras.utils.get_file(
                 "tweet_images",
                 "https://github.com/sayakpaul/Multimodal-Entailment-Baseline/releases/download/v1.0.0/tweet_images.tar.gz",
                 untar=True,
             )
+            self.image_base_path = os.path.join(image_base_path, "tweet_images")
+            
             self.df = pd.read_csv("https://github.com/sayakpaul/Multimodal-Entailment-Baseline/raw/main/csvs/tweets.csv").iloc[0:1000]
             
             self.status_var.set("Loading BERT Preprocessor...")

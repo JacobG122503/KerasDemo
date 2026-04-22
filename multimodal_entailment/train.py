@@ -27,22 +27,32 @@ image_base_path = keras.utils.get_file(
     untar=True,
 )
 
+# The tar.gz file extracts its contents into a subfolder of the same name.
+image_base_path = os.path.join(image_base_path, "tweet_images")
+
 df = pd.read_csv("https://github.com/sayakpaul/Multimodal-Entailment-Baseline/raw/main/csvs/tweets.csv").iloc[0:1000]
 
-images_one_paths = []
-images_two_paths = []
-
+print("Filtering missing images...")
+valid_rows = []
 for idx in range(len(df)):
     current_row = df.iloc[idx]
     id_1 = current_row["id_1"]
     id_2 = current_row["id_2"]
     ext_1 = current_row["image_1"].split(".")[-1]
     ext_2 = current_row["image_2"].split(".")[-1]
-    images_one_paths.append(os.path.join(image_base_path, str(id_1) + f".{ext_1}"))
-    images_two_paths.append(os.path.join(image_base_path, str(id_2) + f".{ext_2}"))
+    img1_path = os.path.join(image_base_path, str(id_1) + f".{ext_1}")
+    img2_path = os.path.join(image_base_path, str(id_2) + f".{ext_2}")
+    
+    if os.path.exists(img1_path) and os.path.exists(img2_path):
+        valid_rows.append({**current_row.to_dict(), "image_1_path": img1_path, "image_2_path": img2_path})
 
-df["image_1_path"] = images_one_paths
-df["image_2_path"] = images_two_paths
+if not valid_rows:
+    print("CRITICAL ERROR: No valid image pairs were found in the extracted directory!")
+    print(f"Checked in: {image_base_path}")
+    import sys
+    sys.exit(1)
+
+df = pd.DataFrame(valid_rows)
 df["label_idx"] = df["label"].apply(lambda x: label_map[x])
 
 train_df, test_df = train_test_split(df, test_size=0.1, stratify=df["label"].values, random_state=42)
@@ -145,7 +155,7 @@ def create_text_encoder(num_projection_layers, projection_dims, dropout_rate, tr
     bert = keras_hub.models.BertBackbone.from_preset("bert_base_en_uncased")
     bert.trainable = trainable
 
-    inputs = {feature: keras.Input(shape=(128,), dtype="int32", name=feature) for feature in ["padding_mask", "segment_ids", "token_ids"]}
+    inputs = {feature: keras.Input(shape=(256,), dtype="int32", name=feature) for feature in ["padding_mask", "segment_ids", "token_ids"]}
     embeddings = bert(inputs)["pooled_output"]
     outputs = project_embeddings(embeddings, num_projection_layers, projection_dims, dropout_rate)
     return keras.Model(inputs, outputs, name="text_encoder")
@@ -154,7 +164,7 @@ def create_multimodal_model(num_projection_layers=1, projection_dims=256, dropou
     image_1 = keras.Input(shape=(128, 128, 3), name="image_1")
     image_2 = keras.Input(shape=(128, 128, 3), name="image_2")
 
-    text_inputs = {feature: keras.Input(shape=(128,), dtype="int32", name=feature) for feature in ["padding_mask", "segment_ids", "token_ids"]}
+    text_inputs = {feature: keras.Input(shape=(256,), dtype="int32", name=feature) for feature in ["padding_mask", "segment_ids", "token_ids"]}
     
     vision_encoder = create_vision_encoder(num_projection_layers, projection_dims, dropout_rate, vision_trainable)
     text_encoder = create_text_encoder(num_projection_layers, projection_dims, dropout_rate, text_trainable)
