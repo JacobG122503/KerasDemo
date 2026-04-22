@@ -8,3 +8,5 @@ numpy
 scikit-learn
 scikit-image
 Pillow
+jax
+jaxlib

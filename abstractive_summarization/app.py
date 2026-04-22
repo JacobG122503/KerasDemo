@@ -18,7 +18,8 @@ def main():
 
     if not model_path:
         # Find available models
-        models_dir = "models"
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        models_dir = os.path.join(script_dir, "models")
         available_models = []
         if os.path.exists(models_dir):
             available_models = glob.glob(os.path.join(models_dir, "*.keras"))
