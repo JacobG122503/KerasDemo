@@ -77,9 +77,9 @@ run_epochs() {
     cd ~/abstractive_summarization
     GPU_CANDIDATES=\$(sinfo -h -p instruction -o '%G' 2>/dev/null | tr ',' '\n' | grep -Eo 'gpu(:[^, ]+)*:[0-9]+' | sed -E 's/.*:([0-9]+)$/\1/' | sort -nr | uniq || true)
     GPU_COUNT=\$(echo \"\$GPU_CANDIDATES\" | head -n 1)
-    if [ -z \"\$GPU_COUNT\" ]; then GPU_COUNT=1; fi
+    if [ -z \"\$GPU_COUNT\" ] || [ \"\$GPU_COUNT\" -eq 0 ]; then GPU_COUNT=1; fi
     echo \"Selected GPU count: \${GPU_COUNT}\"
-    srun --partition=instruction --account=s2026.se.4390.01 --gres=gpu:\${GPU_COUNT} --pty bash srun_wrapper.sh --epochs $epochs
+    srun --partition=instruction --account=s2026.se.4390.01 --gres=gpu:\${GPU_COUNT} --mem=48G --cpus-per-task=20 --pty bash srun_wrapper.sh --epochs $epochs
     "
 
     echo "Downloading ${epochs}-epoch model to local computer..."
