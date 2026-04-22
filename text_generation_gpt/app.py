@@ -85,26 +85,45 @@ class TextGenApp:
         try:
             self.model = keras.models.load_model(path)
             
-            self.status_var.set("Loading SimpleBooks Dataset to reconstruct Vocabulary...")
-            self.root.update()
-            
-            extracted_path = keras.utils.get_file(
-                origin="https://dldata-public.s3.us-east-2.amazonaws.com/simplebooks.zip",
-                extract=True,
-            )
-            path_ds = os.path.join(extracted_path, "simplebooks", "simplebooks-92-raw")
-            raw_train_ds = (
-                tf_data.TextLineDataset(os.path.join(path_ds, "train.txt"))
-                .filter(lambda x: tf_strings.length(x) > 512)
-                .batch(64)
-            )
-            
-            vocab = keras_hub.tokenizers.compute_word_piece_vocabulary(
-                raw_train_ds,
-                vocabulary_size=5000,
-                lowercase=True,
-                reserved_tokens=["[PAD]", "[UNK]", "[BOS]"],
-            )
+            vocab_path = os.path.join(self.models_dir, "vocab.txt")
+            if os.path.exists(vocab_path):
+                self.status_var.set("Loading cached vocabulary (Instant)...")
+                self.root.update()
+                with open(vocab_path, "r", encoding="utf-8") as f:
+                    vocab = [line.strip() for line in f]
+            else:
+                self.status_var.set("Downloading Dataset (First time only, check terminal for progress)...")
+                self.root.update()
+                
+                extracted_path = keras.utils.get_file(
+                    origin="https://dldata-public.s3.us-east-2.amazonaws.com/simplebooks.zip",
+                    extract=True,
+                )
+                path_ds = os.path.join(extracted_path, "simplebooks", "simplebooks-92-raw")
+                raw_train_ds = (
+                    tf_data.TextLineDataset(os.path.join(path_ds, "train.txt"))
+                    .filter(lambda x: tf_strings.length(x) > 512)
+                    .batch(64)
+                )
+                
+                self.status_var.set("Computing Vocabulary (This takes ~3 minutes)...")
+                self.root.update()
+                
+                vocab = keras_hub.tokenizers.compute_word_piece_vocabulary(
+                    raw_train_ds,
+                    vocabulary_size=5000,
+                    lowercase=True,
+                    reserved_tokens=["[PAD]", "[UNK]", "[BOS]"],
+                )
+                
+                self.status_var.set("Saving Vocabulary for future use...")
+                self.root.update()
+                with open(vocab_path, "w", encoding="utf-8") as f:
+                    for token in vocab:
+                        if isinstance(token, bytes):
+                            f.write(token.decode("utf-8") + "\n")
+                        else:
+                            f.write(str(token) + "\n")
             
             self.tokenizer = keras_hub.tokenizers.WordPieceTokenizer(
                 vocabulary=vocab,

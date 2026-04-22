@@ -24,11 +24,11 @@ gpt2_lm = keras_hub.models.GPT2CausalLM.from_preset(
     "gpt2_base_en", preprocessor=preprocessor
 )
 
-print("Loading Reddit TIFU dataset...")
-reddit_ds = tfds.load("reddit_tifu", split="train", as_supervised=True)
+print("Loading IMDB dataset...")
+imdb_ds = tfds.load("imdb_reviews", split="train", as_supervised=True)
 
 train_ds = (
-    reddit_ds.map(lambda document, _: document)
+    imdb_ds.map(lambda document, _: document)
     .batch(32)
     .cache()
     .prefetch(tf.data.AUTOTUNE)
