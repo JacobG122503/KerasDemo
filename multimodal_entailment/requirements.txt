@@ -1,0 +1,10 @@
+keras>=3.0.0
+keras-hub
+tensorflow
+tensorflow-datasets
+tensorflow-text
+pandas
+numpy
+scikit-learn
+scikit-image
+Pillow
